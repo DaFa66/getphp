@@ -1,11 +1,11 @@
-# getPHP - Local PHP Stack. One Command. Done.
+# getPHP.org - Local PHP Stack. One Command. Done.
 
 Launch your local PHP web stack with a single command. > Enjoy a full development environment without the bloat of a desktop application. Currently available for macOS (Apple Silicon) only. Windows and Linux versions are in the works.
 
 ## How to use?
 Paste this into a macOS Terminal:
 ```shell
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/getphp/getphp/HEAD/getphp-mac.sh)"
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/getphporg/getphp/HEAD/getphp-mac.sh)"
 ```
 __Zero footprint:__ The getPHP script runs entirely in-memory and never installs itself on your machine. Only the PHP stack is added if you choose to install it. To manage services, update, or uninstall the stack, simply re-run the command in your terminal at any time.
 
@@ -45,4 +45,4 @@ Yes, the getPHP script is 100% free and open source.
 ## Support & Contributions
 If you enjoy using getPHP, please give it a star on GitHub to help others find it.
 
-If you run into any errors or bugs, please let me know by opening an [issue](https://github.com/getphp/getphp/issues) or sending a [pull request](https://github.com/getphp/getphp/pulls).
+If you run into any errors or bugs, please let me know by opening an [issue](https://github.com/getphporg/getphp/issues) or sending a [pull request](https://github.com/getphporg/getphp/pulls).
