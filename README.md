@@ -1,18 +1,19 @@
-# getPHP.org - Local PHP Stack. One Command. Done.
+# getPHP - Local PHP Stack. One Command. Done.
 
-Launch your local PHP web stack with a single command. > Enjoy a full development environment without the bloat of a desktop application. Currently available for Apple Silicon Mac, Ubuntu, Debian and Mint. The Windows version is in the works.
+Launch your local PHP web stack with a single command. > Enjoy a full development environment without the bloat of a desktop application. Currently available for Apple Silicon Mac, Ubuntu, Debian and Mint. The Windows version is in the works. Please visit [getPHP.org](https://getphp.org) to subscribe for updates.
 
-## 1. macOS: Apple Silicon Mac
+## Apple Silicon Mac
 Copy & paste this into your terminal:
 ```shell
 /bin/zsh -c "$(curl -fsSL https://raw.githubusercontent.com/getphporg/getphp/HEAD/getphp.sh)"
 ```
-## 2. Linux: Ubuntu, Debian, Mint
+## Ubuntu, Debian, Mint
 Copy & paste this into your terminal:
 ```shell
 if ! command -v curl &> /dev/null; then sudo apt install -y curl; fi && /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/getphporg/getphp/HEAD/getphp.sh)"
 ```
-## 3. Windows: Currently under development.
+## Windows 11
+Currently under development.
 
 ## Zero Footprint
 The getPHP script runs entirely in-memory and never installs itself on your machine. Only the PHP stack is added if you choose to install it. To manage services, update, or uninstall the stack, simply re-run the command in your terminal at any time.
@@ -54,3 +55,5 @@ Yes, the getPHP script is 100% free and open source.
 If you enjoy using getPHP, please give it a star on GitHub to help others find it.
 
 If you run into any errors or bugs, please let me know by opening an [issue](https://github.com/getphporg/getphp/issues) or sending a [pull request](https://github.com/getphporg/getphp/pulls).
+
+You can also directly contact me through the [Support Page](https://getphp.org/support.php) at [getPHP.org](https://getphp.org).
