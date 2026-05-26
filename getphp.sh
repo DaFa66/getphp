@@ -76,7 +76,7 @@ printf "~~~~~~~~~~~~~~~\n"
 [[ $STACK == 1 ]] && printf "${CYAN}${UNDERLINE}U${RESET}${CYAN}pdate${RESET}   Update all packages.\n"
 [[ $STACK == 1 ]] && printf "${CYAN}${UNDERLINE}R${RESET}${CYAN}estart${RESET}  Restart all PHP stack services.\n"
 [[ $STACK == 1 ]] && printf "${CYAN}${UNDERLINE}S${RESET}${CYAN}top${RESET}     Stop all PHP stack services.\n"
-[[ $STACK == 1 ]] && printf "${CYAN}DELETE${RESET}   Delete the entire PHP stack.\n"
+[[ $STACK == 1 ]] && printf "${CYAN}${UNDERLINE}D${RESET}${CYAN}elete${RESET}   Show delete information.\n"
 printf "${CYAN}${UNDERLINE}Q${RESET}${CYAN}uit${RESET}     Quit this application.\n"
 
 printf "\n"
@@ -204,8 +204,21 @@ elif [[ $STACK == 1 ]]; then
         [sS]|[sS]top)
             brew services stop httpd && brew services stop mysql && brew services stop php && printf "\n[${GREEN}  OK  ${RESET}]  Stopped all PHP stack services.\n" || printf "\n[${RED}  Error  ${RESET}]  Failed to stop PHP stack services.\n"
             ;;
-        DELETE)
-            brew services stop httpd && brew services stop mysql && brew services stop php && brew uninstall httpd && brew uninstall mysql && brew uninstall php && brew uninstall phpmyadmin && brew autoremove && brew cleanup && rm -rf $BREW_PREFIX/etc/httpd/httpd.conf && printf "[${GREEN}  OK  ${RESET}]  Deleted file: $BREW_PREFIX/etc/httpd/httpd.conf\n" && rm -rf $BREW_PREFIX/etc/phpmyadmin.config.inc.php && printf "[${GREEN}  OK  ${RESET}]  Deleted file: $BREW_PREFIX/etc/phpmyadmin.config.inc.php\n" && printf "\n[${GREEN}  OK  ${RESET}]  PHP stack is deleted.\n" || printf "\n[${RED}  Error  ${RESET}]  Failed to delete the PHP stack.\n"
+        [dD]|[dD]elete)
+            printf "IMPORTANT DELETE INFORMATION!\n"
+            printf "=============================\n"
+            printf "- The data in the 'localhost' folder will NOT be deleted.\n"
+            printf "- YES, Apache, MySQL, PHP and phpMyAdmin WILL BE DELETED!\n"
+            printf "- YES, all of your local MySQL databases WILL BE DELETED!\n\n"
+            printf "Are you sure you want to delete?\n\n"
+            printf "==> Enter ${CYAN}Delete${RESET}/${CYAN}Cancel${RESET}: " && read confirm
+
+            if [[ "$confirm" == "Delete" || "$confirm" == "delete" ]]; then
+                brew services stop httpd && brew services stop mysql && brew services stop php && brew uninstall httpd && brew uninstall mysql && brew uninstall php && brew uninstall phpmyadmin && brew autoremove && brew cleanup && rm -rf $BREW_PREFIX/etc/httpd/httpd.conf && printf "[${GREEN}  OK  ${RESET}]  Deleted file: $BREW_PREFIX/etc/httpd/httpd.conf\n" && rm -rf $BREW_PREFIX/etc/phpmyadmin.config.inc.php && printf "[${GREEN}  OK  ${RESET}]  Deleted file: $BREW_PREFIX/etc/phpmyadmin.config.inc.php\n" && printf "\n[${GREEN}  OK  ${RESET}]  PHP stack is deleted.\n" || printf "\n[${RED}  Error  ${RESET}]  Failed to delete the PHP stack.\n"
+            else
+                printf "[${GREEN}  OK  ${RESET}]  Nothing was deleted.\n"
+                printf "[${GREEN}  OK  ${RESET}]  Goodbye!\n"
+            fi
             ;;
         [qQ]|[qQ]uit)
             printf "[${GREEN}  OK  ${RESET}]  Active services keep running.\n"
