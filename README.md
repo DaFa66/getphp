@@ -44,6 +44,7 @@ The getPHP script installs and configures everything you need to start PHP web d
 - starts the httpd service
 - starts the mysql service
 - starts the php service
+... and much more that you would otherwise have to configure manually.
 
 ## How does getPHP work?
 It is a shell script that runs directly from GitHub and leaves no footprint on your system. Your PHP stack is only installed once you explicitly choose to do so.
