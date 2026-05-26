@@ -60,4 +60,4 @@ You can also directly contact me through the [Support Page](https://getphp.org/s
 
 ---
 
-> **Disclaimer:** getPHP is an independent open-source tool and is not affiliated with, sponsored by, or endorsed by the PHP Group or the PHP Foundation.
+> **Disclaimer:** getPHP is an independent, open-source tool and is not affiliated with, sponsored by, or endorsed by the PHP Group or the PHP Foundation.
