@@ -208,10 +208,10 @@ elif [[ $STACK == 1 ]]; then
         [dD]|[dD]elete)
             printf "IMPORTANT DELETE INFORMATION!\n"
             printf "${RED}=============================${RESET}\n"
-            printf "- The data in the 'localhost' folder will NOT be deleted.\n"
-            printf "- YES, Apache, MySQL, PHP and phpMyAdmin WILL BE DELETED!\n"
-            printf "- YES, all of your local MySQL databases WILL BE DELETED!\n\n"
-            printf "Are you sure you want to delete?\n\n"
+            printf "- YES: Apache, MySQL, PHP and phpMyAdmin WILL BE DELETED!\n"
+            printf "- Files in the 'localhost' directory will NOT be deleted.\n"
+            printf "- Data in your local MySQL databases will NOT be deleted.\n\n"
+            printf "Are you sure you want to proceed?\n\n"
             printf "${BOLD}==> Enter ${CYAN}Delete${RESET}/${BOLD}${CYAN}Cancel${RESET}: " && read confirm
 
             if [[ "$confirm" == "Delete" || "$confirm" == "delete" ]]; then
