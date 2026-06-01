@@ -1,6 +1,6 @@
 # getPHP for Windows — Local Web Stack. One Script. Done.
 
-Launch your local PHP web stack on Windows 11 with a single PowerShell script. Enjoy a full development environment without the bloat of a desktop application like XAMPP.
+Launch your local PHP web stack on Windows 11 with a single PowerShell script. Enjoy a full development environment without the bloat of other desktop application and a replacement for a stale XAMPP install.
 
 > **This is the official Windows port of [getPHP.org](https://getphp.org).**  
 > The original Mac/Linux script lives at [getphporg/getphp](https://github.com/getphporg/getphp).
@@ -9,19 +9,19 @@ Launch your local PHP web stack on Windows 11 with a single PowerShell script. E
 
 ```powershell
 # Right-click PowerShell → Run as Administrator, then:
-& "D:\dev\getphp\install_webstack.ps1"
+irm https://raw.githubusercontent.com/getphporg/getphp/HEAD/getphp.ps1 | iex
 ```
 
 Press **I** to install. That's it.
 
 ## What It Installs
 
-| Component | Source | Latest? |
-|-----------|--------|---------|
-| **Apache** | [Apache Lounge](https://www.apachelounge.com/download/) | ✅ Resolves latest VS18 build dynamically |
-| **PHP** | [windows.php.net](https://windows.php.net/downloads/releases/) | ✅ Parses releases.json for latest 8.x TS VS17 (falls back to VS16) |
-| **MariaDB** | [mariadb.org](https://downloads.mariadb.org/rest-api/mariadb/) | ✅ Queries REST API for latest Stable (Rolling > LTS) |
-| **phpMyAdmin** | [phpmyadmin.net](https://www.phpmyadmin.net/downloads/) | ✅ Scrapes downloads page for latest stable |
+| Component      | Source                                                         | Latest?                                                             |
+| -------------- | -------------------------------------------------------------- | ------------------------------------------------------------------- |
+| **Apache**     | [Apache Lounge](https://www.apachelounge.com/download/)        | ✅ Resolves latest VS18 build dynamically                           |
+| **PHP**        | [windows.php.net](https://windows.php.net/downloads/releases/) | ✅ Parses releases.json for latest 8.x TS VS17 (falls back to VS16) |
+| **MariaDB**    | [mariadb.org](https://downloads.mariadb.org/rest-api/mariadb/) | ✅ Queries REST API for latest Stable (Rolling > LTS)               |
+| **phpMyAdmin** | [phpmyadmin.net](https://www.phpmyadmin.net/downloads/)        | ✅ Scrapes downloads page for latest stable                         |
 
 All installed to `D:\webstack\` — no system-wide changes, no services registered, no cruft.
 
@@ -83,28 +83,29 @@ D  Delete the web stack
 Q  Quit
 ```
 
-| Key | Action |
-|-----|--------|
-| **I** | Install the web stack (download + configure + start) |
-| **U** | Update all components to their latest stable versions |
-| **R** | Restart Apache + MariaDB |
-| **S** | Stop all services |
-| **T** | Start all services |
+| Key   | Action                                                         |
+| ----- | -------------------------------------------------------------- |
+| **I** | Install the web stack (download + configure + start)           |
+| **U** | Update all components to their latest stable versions          |
+| **R** | Restart Apache + MariaDB                                       |
+| **S** | Stop all services                                              |
+| **T** | Start all services                                             |
 | **D** | Delete the web stack (preserves `www\` files and MariaDB data) |
-| **Q** | Quit |
+| **Q** | Quit                                                           |
 
 ## After Installation
 
-| Question | Answer |
-|----------|--------|
-| Where to put website files? | `D:\webstack\www` |
-| How to test your PHP setup? | http://localhost/phpinfo.php |
-| Where to access phpMyAdmin? | http://localhost/phpmyadmin |
-| How to log into phpMyAdmin? | Username: `root` / Password: *(blank)* |
+| Question                    | Answer                                 |
+| --------------------------- | -------------------------------------- |
+| Where to put website files? | `D:\webstack\www`                      |
+| How to test your PHP setup? | http://localhost/phpinfo.php           |
+| Where to access phpMyAdmin? | http://localhost/phpmyadmin            |
+| How to log into phpMyAdmin? | Username: `root` / Password: _(blank)_ |
 
 ## What the Installer Configures
 
 ### Apache
+
 - Port 80, ServerName `localhost:80` (suppresses AH00558 warnings)
 - DocumentRoot `D:/webstack/www` with `Options Indexes FollowSymLinks`
 - `mod_rewrite` enabled with `AllowOverride All` — Trongate, Laravel, WordPress `.htaccess` rewrites work out of the box
@@ -115,6 +116,7 @@ Q  Quit
 - Graceful shutdown via `httpd.exe -k stop` (force kill only as fallback)
 
 ### PHP
+
 - **Extensions enabled:** `curl`, `fileinfo`, `gd`, `intl`, `mbstring`, `mysqli`, `openssl`, `pdo_mysql`, `pdo_sqlite`, `sqlite3`
 - `display_errors = On` for development
 - **Error logging:** `error_log = D:/webstack/www/php_errors.log`
@@ -122,15 +124,18 @@ Q  Quit
 - **DLL compatibility:** PHP dependency DLLs (ICU, libssh2, nghttp2, etc.) are automatically copied to Apache's `bin/` to resolve extension loading warnings under Windows DLL search order
 
 ### SQLite3 DLL Fix
+
 - VS17 PHP builds (8.5+) bundle an incompatible `libsqlite3.dll` that causes a blocking "Entry Point Not Found" popup when loading `pdo_sqlite` or `sqlite3` extensions
 - The installer downloads the latest compatible `sqlite3.dll` from sqlite.org and replaces the bundled version in both the PHP root AND Apache's `bin/` directory — allowing both SQLite extensions to load cleanly
 
 ### MariaDB
+
 - Data directory initialised with blank root password
 - Latest stable release resolved via REST API (Rolling > LTS)
 - Debug-symbols-only zip excluded from download filter
 
 ### phpMyAdmin
+
 - Auto-generated `config.inc.php` with blowfish secret, blank-password root login, and correct 1-based server indexing (`$i = 1`)
 
 ## Prerequisites
@@ -159,12 +164,15 @@ Unlike most installers that hardcode version numbers, `install_webstack.ps1` dyn
 ## Known Quirks & Fixes
 
 ### XAMPP Service Conflict
+
 If you have XAMPP installed, its `Apache2.4` Windows service may auto-restart and claim port 80 when the webstack stops. To switch: stop the XAMPP service (`net stop Apache2.4`), then start the webstack Apache directly.
 
 ### Trongate / Framework Subdirectory Apps
+
 The webstack's Apache config supports `.htaccess` rewrites out of the box (`AllowOverride All` + `Options FollowSymLinks`). Clone any Trongate app under `www/` and the `public/` front controller is routed automatically.
 
 ### PHP Extension `pdo_firebird`
+
 Not enabled by default — requires a separate Firebird client library (`fbclient.dll`) not bundled with PHP.
 
 ## Support & Contributions
