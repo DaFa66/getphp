@@ -800,7 +800,7 @@ function Invoke-InstallWebStack {
     # Configure
     Invoke-ConfigureApache
     Invoke-ConfigurePhp
-    Invoke-FixSqliteDll
+    # Invoke-FixSqliteDll
     Invoke-ConfigureMariaDb
     Invoke-ConfigurePhpMyAdmin
 
@@ -872,7 +872,7 @@ function Invoke-UpdateWebStack {
 
     Invoke-ConfigureApache
     Invoke-ConfigurePhp
-    Invoke-FixSqliteDll
+    # Invoke-FixSqliteDll
     Invoke-ConfigureMariaDb
     Invoke-ConfigurePhpMyAdmin
 
