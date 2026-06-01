@@ -23,7 +23,7 @@ Press **I** to install. That's it.
 | **MariaDB**    | [mariadb.org](https://downloads.mariadb.org/rest-api/mariadb/) | ✅ Queries REST API for latest Stable (Rolling > LTS)               |
 | **phpMyAdmin** | [phpmyadmin.net](https://www.phpmyadmin.net/downloads/)        | ✅ Scrapes downloads page for latest stable                         |
 
-All installed to `D:\webstack\` — no system-wide changes, no services registered, no cruft.
+All installed to `D:\webstack\` by default, but you can change it — no system-wide changes, no services registered, no cruft.
 
 ## Directory Layout
 
