@@ -15,6 +15,11 @@ if ! command -v curl &> /dev/null; then sudo apt install -y curl; fi && source <
 ## Windows 11
 Currently under development.
 
+## Video Tutorial
+If you want to see the script in action and learn how to use it, check out the video tutorial below:
+
+[![Watch the video](https://img.youtube.com/vi/CSvH4A3erJo/maxresdefault.jpg)](https://www.youtube.com/watch?v=CSvH4A3erJo)
+
 ## Zero Footprint
 The getPHP script runs entirely in-memory and never installs itself on your machine. Only the PHP stack is added if you choose to install it. To manage services, update, or uninstall the stack, simply re-run the command in your terminal at any time.
 
