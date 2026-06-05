@@ -25,7 +25,7 @@ On subsequent runs the script remembers your install path and goes straight to t
 | **MariaDB**    | [mariadb.org](https://downloads.mariadb.org/rest-api/mariadb/) | ✅ Queries REST API for latest Stable (Rolling > LTS)               |
 | **phpMyAdmin** | [phpmyadmin.net](https://www.phpmyadmin.net/downloads/)        | ✅ Scrapes downloads page for latest stable                         |
 
-All installed to `C:\webstack\` by default — no system-wide changes, no services registered, no cruft.
+All installed to `C:\webstack\` by default — no system-wide changes, no cruft. Optionally register as Windows services for auto-start on boot.
 
 ## Directory Layout
 
@@ -98,13 +98,13 @@ Q  Quit
 
 ## After Installation
 
-| Question                    | Answer                                    |
-| --------------------------- | ----------------------------------------- |
-| Where to put website files? | `C:\webstack\www`                         |
-| How to test your PHP setup? | http://localhost/phpinfo.php              |
-| Where to access phpMyAdmin? | http://localhost/phpmyadmin               |
-| How to log into phpMyAdmin? | Username: `root` / Password: _(blank)_    |
-| PHP from terminal?          | `php` and `mysql` added to user PATH      |
+| Question                    | Answer                                 |
+| --------------------------- | -------------------------------------- |
+| Where to put website files? | `C:\webstack\www`                      |
+| How to test your PHP setup? | http://localhost/phpinfo.php           |
+| Where to access phpMyAdmin? | http://localhost/phpmyadmin            |
+| How to log into phpMyAdmin? | Username: `root` / Password: _(blank)_ |
+| PHP from terminal?          | `php` and `mysql` added to user PATH   |
 
 ## Persistent Config
 
@@ -116,6 +116,7 @@ The script saves your install path and component versions to `%APPDATA%\getphp\c
 - **Reset on delete** — pressing `D` clears the config entirely, so the next run prompts for a fresh location
 
 Example `config.json`:
+
 ```json
 {
   "install_path": "C:\\webstack",
@@ -133,10 +134,7 @@ Example `config.json`:
     "mariadb": "12.3.2",
     "phpmyadmin": "5.2.3"
   },
-  "path_entries": [
-    "C:\\webstack\\php",
-    "C:\\webstack\\mariadb\\bin"
-  ]
+  "path_entries": ["C:\\webstack\\php", "C:\\webstack\\mariadb\\bin"]
 }
 ```
 
@@ -181,7 +179,7 @@ Example `config.json`:
 
 ## Prerequisites
 
-- **Windows 10/11** (64-bit)
+- **Windows 10/11** (x64 only — Intel/AMD 64-bit; ARM64 is not supported)
 - **Run as Administrator** (required for port 80 binding)
 - **Visual C++ Redistributable** — Apache Lounge VS18 and MariaDB 12.x require the [VC++ Redistributable (VS 2017–2026) x64](https://aka.ms/vs/17/release/vc_redist.x64.exe). The installer **automatically checks** if it's installed and offers a one-click silent install if missing.
 
@@ -204,6 +202,18 @@ Restore previous databases? [Y/n]
 
 Say **yes** and your databases are moved back — MariaDB picks them up without re-initialisation.
 
+## Windows Service Registration
+
+After install or update, the script offers to register Apache and MariaDB as Windows services:
+
+```
+Install as Windows services (auto-start on boot)? [y/N]
+```
+
+Say **yes** and two services are created — `getPHP_Apache` and `getPHP_MariaDB` — set to auto-start. After a reboot your stack is running without opening the script. The start/stop/restart dashboard commands (`T`/`S`/`R`) automatically detect service mode and use `Start-Service`/`Stop-Service` instead of process management.
+
+Services are automatically removed when you delete the stack (`D`).
+
 ## Zero Footprint
 
 The `getphp.ps1` script runs entirely in-memory and never installs itself on your machine. Only the web stack is added to `C:\webstack\` if you choose to install it, plus a small config file at `%APPDATA%\getphp\config.json`. To manage services, update, or uninstall the stack, simply re-run the script at any time.
@@ -223,16 +233,16 @@ Unlike most installers that hardcode version numbers, `getphp.ps1` dynamically r
 
 ## Known Quirks & Fixes
 
-### XAMPP Service Conflict
+### ARM64 / Snapdragon
+Not supported. getPHP requires x64 (Intel/AMD 64-bit) — Apache Lounge and MariaDB do not provide native ARM64 Windows binaries. The script detects ARM64 at startup and exits with a clear message.
 
+### XAMPP Service Conflict
 If you have XAMPP installed, its `Apache2.4` Windows service may auto-restart and claim port 80 when the webstack stops. To switch: stop the XAMPP service (`net stop Apache2.4`), then start the webstack Apache directly.
 
 ### Trongate / Framework Subdirectory Apps
-
 The webstack's Apache config supports `.htaccess` rewrites out of the box (`AllowOverride All` + `Options FollowSymLinks`). Clone any Trongate app under `www/` and the `public/` front controller is routed automatically.
 
 ### PHP Extension `pdo_firebird`
-
 Not enabled by default — requires a separate Firebird client library (`fbclient.dll`) not bundled with PHP.
 
 ## Support & Contributions
