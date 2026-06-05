@@ -1024,7 +1024,7 @@ function Stop-WebStackServices {
 
     # Apache
     if ($apacheAsService -and (Get-Service $SERVICE_APACHE).Status -ne "Stopped") {
-        Stop-Service $SERVICE_APACHE -ErrorAction SilentlyContinue
+        Stop-Service $SERVICE_APACHE -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
         Start-Sleep -Seconds 2
         Write-Ok "Apache service stopped"
         $stopped = $true
@@ -1046,7 +1046,7 @@ function Stop-WebStackServices {
 
     # MariaDB
     if ($mariadbAsService -and (Get-Service $SERVICE_MARIADB).Status -ne "Stopped") {
-        Stop-Service $SERVICE_MARIADB -ErrorAction SilentlyContinue
+        Stop-Service $SERVICE_MARIADB -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
         Start-Sleep -Seconds 2
         Write-Ok "MariaDB service stopped"
         $stopped = $true
@@ -1124,14 +1124,24 @@ function Remove-Services {
     Write-Host ""
     Write-Info "Removing Windows services..."
 
-    Stop-WebStackServices
-    Start-Sleep -Seconds 2
+    # Stop only the services that are actually running (avoid duplicate banner)
+    $apacheSvc  = Get-Service -Name $SERVICE_APACHE -ErrorAction SilentlyContinue
+    $mariadbSvc = Get-Service -Name $SERVICE_MARIADB -ErrorAction SilentlyContinue
 
-    if (Get-Service -Name $SERVICE_APACHE -ErrorAction SilentlyContinue) {
+    if ($apacheSvc -and $apacheSvc.Status -ne "Stopped") {
+        Stop-Service $SERVICE_APACHE -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
+        Start-Sleep -Seconds 2
+    }
+    if ($mariadbSvc -and $mariadbSvc.Status -ne "Stopped") {
+        Stop-Service $SERVICE_MARIADB -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
+        Start-Sleep -Seconds 2
+    }
+
+    if ($apacheSvc) {
         sc.exe delete $SERVICE_APACHE 2>&1 | Out-Null
         Write-Ok "$SERVICE_APACHE service removed"
     }
-    if (Get-Service -Name $SERVICE_MARIADB -ErrorAction SilentlyContinue) {
+    if ($mariadbSvc) {
         sc.exe delete $SERVICE_MARIADB 2>&1 | Out-Null
         Write-Ok "$SERVICE_MARIADB service removed"
     }
