@@ -1562,6 +1562,19 @@ if (-not $isAdmin) {
     exit 1
 }
 
+# CPU architecture check — only x64 (AMD64) is supported
+$cpuArch = $env:PROCESSOR_ARCHITECTURE
+if ($cpuArch -ne "AMD64") {
+    Write-Host ""
+    Write-Err "Unsupported CPU architecture: $cpuArch"
+    Write-Info "getPHP for Windows currently only supports x64 (Intel/AMD 64-bit)."
+    Write-Info "ARM64 (Snapdragon, etc.) is not supported — Apache Lounge and"
+    Write-Info "MariaDB do not provide native ARM64 Windows binaries."
+    Write-Host ""
+    Pause
+    exit 1
+}
+
 # ---- Install location (config-aware) -------------------------
 
 $config = Get-Config
