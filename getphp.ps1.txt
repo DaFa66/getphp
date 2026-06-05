@@ -2,6 +2,10 @@
 #  getPHP — Windows 11 Web Stack Installer & Dashboard
 #  Inspired by getphp.org (Mac) — PowerShell Edition
 #  Github: https://github.com/getphporg/getphp
+#  Author: Simon Field (AKA - DaFa)
+#  License: MIT
+#  Date: 2024-06-01
+#  Version: 1.0.0
 # ============================================================
 #Requires -RunAsAdministrator
 
@@ -398,7 +402,7 @@ function Invoke-ConfigureApache {
     $conf = $conf -replace "`r`n", "`n"
 
     $wwwUnix  = $WWW_PATH -replace '\\', '/'
-    $apacheUnix = $APACHE_PATH -replace '\', '/'
+    $apacheUnix = $APACHE_PATH -replace '\\', '/'
 
     # 1. Set ServerRoot and SRVROOT
     $newSrvRoot = "Define SRVROOT `"$apacheUnix`""
@@ -461,8 +465,8 @@ function Invoke-ConfigureApache {
     }
 
     # 8. PHP integration
-    $phpModuleUnix = "$($PHP_PATH -replace '\','/')/php8apache2_4.dll"
-    $phpIniUnix    = $PHP_PATH -replace '\','/'
+    $phpModuleUnix = "$($PHP_PATH -replace '\\','/')/php8apache2_4.dll"
+    $phpIniUnix    = $PHP_PATH -replace '\\','/'
 
     if ($conf -notmatch 'php_module') {
         $phpBlock = @"
@@ -478,7 +482,7 @@ PHPIniDir "$phpIniUnix"
 
     # 9. phpMyAdmin Alias
     if ($conf -notmatch 'Alias /phpmyadmin') {
-        $pmaUnix = $PHPMYADMIN_PATH -replace '\', '/'
+        $pmaUnix = $PHPMYADMIN_PATH -replace '\\', '/'
         $pmaBlock = @"
 
 # phpMyAdmin (getPHP)
