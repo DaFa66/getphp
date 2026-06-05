@@ -12,13 +12,6 @@
 # ---- Config -------------------------------------------------
 $TEMP_DOWNLOADS  = "$env:TEMP\webstack_downloads"
 
-# ---- Global Constants ---------------------------------------
-# Used by every network call — set once, not per-function
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-$UA              = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-$VC_REDIST_URL   = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
-$SQLITE_DL_URL   = "https://www.sqlite.org/download.html"
-
 # ---- Colours -----------------------------------------------
 function Write-Ok($msg)    { Write-Host "[  OK  ]  $msg" -ForegroundColor Green }
 function Write-Err($msg)   { Write-Host "[ Error ]  $msg" -ForegroundColor Red }
@@ -241,7 +234,8 @@ function Install-VcRedist {
 
     try {
         Write-Info "Downloading Visual C++ Redistributable (VS 2017-2026) x64..."
-        Invoke-WebRequest -Uri $VC_REDIST_URL -OutFile $installer
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri "https://aka.ms/vc14/vc_redist.x64.exe" -OutFile $installer
 
         Write-Info "Running installer (silent -- this may take a moment)..."
         $proc = Start-Process -FilePath $installer -ArgumentList "/install", "/quiet", "/norestart" -Wait -PassThru
@@ -254,12 +248,12 @@ function Install-VcRedist {
         }
         else {
             Write-Warn "Installer exited with code $($proc.ExitCode). You may need to install manually:"
-            Write-Info "  $VC_REDIST_URL"
+            Write-Info "  https://aka.ms/vc14/vc_redist.x64.exe"
         }
     }
     catch {
         Write-Err "Failed to download or install VC++ Redistributable: $_"
-        Write-Info "Please install manually: $VC_REDIST_URL"
+        Write-Info "Please install manually: https://aka.ms/vc14/vc_redist.x64.exe"
         Remove-Item $installer -Force -ErrorAction SilentlyContinue
     }
 }
@@ -272,7 +266,10 @@ function Get-LatestApacheUrl {
     Write-Info "Resolving Apache (Apache Lounge - latest VS18 x64 build)..."
 
     try {
-        $html = Invoke-WebRequest -Uri "https://www.apachelounge.com/download/" -UseBasicParsing -Headers @{ "User-Agent" = $UA }
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+        $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        $html = Invoke-WebRequest -Uri "https://www.apachelounge.com/download/" -UseBasicParsing -Headers @{ "User-Agent" = $ua }
 
         $bestScore = $null
         $bestUrl   = $null
@@ -312,6 +309,7 @@ function Get-LatestPhpUrl {
     Write-Info "Resolving PHP (latest 8.x stable, thread-safe x64 - preferring VS17)..."
 
     try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         $json = Invoke-RestMethod -Uri "https://windows.php.net/downloads/releases/releases.json"
 
         $latestVs17Version = $null
@@ -368,6 +366,8 @@ function Get-LatestMariadbUrl {
     Write-Info "Resolving MariaDB (latest stable, Windows x64)..."
 
     try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
         $json = Invoke-RestMethod -Uri "https://downloads.mariadb.org/rest-api/mariadb/"
 
         $candidates = $json.major_releases | Where-Object { $_.release_status -eq "Stable" }
@@ -419,7 +419,10 @@ function Get-LatestPhpMyAdminUrl {
     Write-Info "Resolving phpMyAdmin (latest stable, all-languages)..."
 
     try {
-        $html = Invoke-WebRequest -Uri "https://www.phpmyadmin.net/downloads/" -UseBasicParsing -Headers @{ "User-Agent" = $UA }
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+        $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        $html = Invoke-WebRequest -Uri "https://www.phpmyadmin.net/downloads/" -UseBasicParsing -Headers @{ "User-Agent" = $ua }
 
         $bestVersion = $null
         $bestUrl     = $null
@@ -468,6 +471,7 @@ function Invoke-DownloadAndExtract($url, $dest, $label) {
 
     $filename = [IO.Path]::GetFileName($url)
     $zipPath  = Join-Path $TEMP_DOWNLOADS $filename
+    $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 
     try {
         # MariaDB uses HTTP redirects that Invoke-WebRequest can't handle reliably.
@@ -483,7 +487,7 @@ function Invoke-DownloadAndExtract($url, $dest, $label) {
                 $request = [System.Net.HttpWebRequest]::Create($current_url)
                 $request.Method = "GET"
                 $request.AllowAutoRedirect = $false
-                $request.UserAgent = $UA
+                $request.UserAgent = $ua
 
                 $response = $request.GetResponse()
                 $status = [int]$response.StatusCode
@@ -515,10 +519,10 @@ function Invoke-DownloadAndExtract($url, $dest, $label) {
             }
         }
         elseif ($url -like "*files.phpmyadmin*") {
-            Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing -MaximumRedirection 10 -Headers @{ "User-Agent" = $UA }
+            Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing -MaximumRedirection 10 -Headers @{ "User-Agent" = $ua }
         }
         else {
-            Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing -Headers @{ "User-Agent" = $UA }
+            Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing -Headers @{ "User-Agent" = $ua }
         }
     }
     catch {
@@ -775,7 +779,9 @@ function Invoke-FixSqliteDll {
 
     # Scrape sqlite.org for the latest x64 DLL
     try {
-        $html = Invoke-WebRequest $SQLITE_DL_URL -UseBasicParsing -Headers @{ "User-Agent" = $UA }
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        $html = Invoke-WebRequest "https://www.sqlite.org/download.html" -UseBasicParsing -Headers @{ "User-Agent" = $ua }
 
         # Find the x64 DLL zip path — sqlite.org changed their page layout.
         # The path is now embedded in a CSV line or JS call, e.g.:
@@ -787,7 +793,7 @@ function Invoke-FixSqliteDll {
             $zipFile = "$TEMP_DOWNLOADS\sqlite3_dll.zip"
 
             Write-Info "Downloading latest SQLite3 DLL..."
-            Invoke-WebRequest $url -OutFile $zipFile -UseBasicParsing -Headers @{ "User-Agent" = $UA }
+            Invoke-WebRequest $url -OutFile $zipFile -UseBasicParsing -Headers @{ "User-Agent" = $ua }
 
             $extractDir = "$TEMP_DOWNLOADS\sqlite3_dll_extract"
             New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
@@ -955,7 +961,7 @@ function Start-WebStackServices {
             Write-Host $testResult -ForegroundColor DarkGray
             Write-Info "If the error mentions missing DLLs (VCRUNTIME, MSVCP, etc.),"
             Write-Info "install the Visual C++ Redistributable from:"
-            Write-Info "  $VC_REDIST_URL"
+            Write-Info "  https://aka.ms/vs/17/release/vc_redist.x64.exe"
             return
         }
 
@@ -1141,27 +1147,6 @@ function Remove-Services {
     }
 }
 
-# ---- Shared Helpers ------------------------------------------
-
-function Get-StackVersions {
-    return @{
-        apache     = Get-ApacheVersion
-        php        = Get-PhpVersion
-        mariadb    = Get-MariaDbVersion
-        phpmyadmin = (Get-PhpMyAdminVersion)
-    }
-}
-
-function Offer-ServiceRegistration {
-    if (-not (Test-ServicesInstalled)) {
-        Write-Host ""
-        $choice = Read-Host "Install as Windows services (auto-start on boot)? [y/N]"
-        if ($choice -match "^[Yy]") {
-            Install-AsServices
-        }
-    }
-}
-
 # ============================================================
 #  INSTALL
 # ============================================================
@@ -1257,9 +1242,18 @@ function Invoke-InstallWebStack {
     # Start services
     Start-WebStackServices
 
-    # Capture installed versions + update config
-    $versions = Get-StackVersions
+    # Capture installed versions
+    $versions = @{
+        apache     = Get-ApacheVersion
+        php        = Get-PhpVersion
+        mariadb    = Get-MariaDbVersion
+        phpmyadmin = (Get-PhpMyAdminVersion)
+    }
+
+    # Add PHP + MariaDB to user PATH (removes old entries from previous install)
     $pathEntries = Add-ToPath
+
+    # Update config with versions and PATH entries
     Save-Config -InstallPath $BASE -Versions $versions -PathEntries $pathEntries
 
     Write-Host ""
@@ -1275,7 +1269,17 @@ function Invoke-InstallWebStack {
     Write-Info "  PHP + MariaDB added to user PATH (new terminals only)"
     Write-Host ""
 
-    Offer-ServiceRegistration
+    # Offer to register as Windows services (auto-start on boot)
+    if (-not (Test-ServicesInstalled)) {
+        $svcChoice = Read-Host "Install as Windows services (auto-start on boot)? [y/N]"
+        if ($svcChoice -match "^[Yy]") {
+            Install-AsServices
+        }
+        else {
+            Write-Info "Services will run as processes (started via this script)."
+            Write-Info "Re-run and press 'T' to start, or reinstall to register services."
+        }
+    }
 }
 
 # ============================================================
@@ -1335,11 +1339,23 @@ function Invoke-UpdateWebStack {
     Write-Ok "Update complete"
 
     # Update config with new versions
-    $versions = Get-StackVersions
+    $versions = @{
+        apache     = Get-ApacheVersion
+        php        = Get-PhpVersion
+        mariadb    = Get-MariaDbVersion
+        phpmyadmin = (Get-PhpMyAdminVersion)
+    }
     $pathEntries = Add-ToPath
     Save-Config -InstallPath $BASE -Versions $versions -PathEntries $pathEntries
 
-    Offer-ServiceRegistration
+    # Offer Windows services if not already registered
+    if (-not (Test-ServicesInstalled)) {
+        Write-Host ""
+        $svcChoice = Read-Host "Install as Windows services (auto-start on boot)? [y/N]"
+        if ($svcChoice -match "^[Yy]") {
+            Install-AsServices
+        }
+    }
 }
 
 # ============================================================
