@@ -1072,7 +1072,8 @@ $SERVICE_APACHE  = "getPHP_Apache"
 $SERVICE_MARIADB = "getPHP_MariaDB"
 
 function Test-ServicesInstalled {
-    return (Get-Service -Name $SERVICE_APACHE -ErrorAction SilentlyContinue) -ne $null
+    $service = Get-Service -Name $SERVICE_APACHE -ErrorAction SilentlyContinue
+    return $null -ne $service
 }
 
 function Install-AsServices {
