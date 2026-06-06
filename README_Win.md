@@ -1,9 +1,9 @@
-# getPHP for Windows — Local Web Stack. One Script. Done.
+# getPHP for Windows x64 — Local Web Stack. One Script. Done.
 
 Launch your local PHP web stack on Windows 11 with a single PowerShell script. Enjoy a full development environment without the bloat of other desktop application and a replacement for a stale XAMPP install.
 
-> **This is the unofficial Windows port of [getPHP.org](https://getphp.org).**
-> Port done by Simon Field (aka DaFa)  
+> **This Windows x64 port of [getPHP.org](https://getphp.org)**
+> by Simon Field (aka DaFa)  
 > The original Mac/Linux script lives at [getphporg/getphp](https://github.com/getphporg/getphp).
 
 ## Quick Start
@@ -79,23 +79,23 @@ PHP ----------> CLI available
 
 Stack Commands:
 ~~~~~~~~~~~~~~~
-U  Update all components
+U  Update outdated components
 R  Restart all services
 S  Stop all services
-T  Start all services
+T  Start all services (offers Windows service registration)
 D  Delete the web stack
 Q  Quit
 ```
 
-| Key   | Action                                                         |
-| ----- | -------------------------------------------------------------- |
-| **I** | Install the web stack (download + configure + start)           |
-| **U** | Update all components to their latest stable versions          |
-| **R** | Restart Apache + MariaDB                                       |
-| **S** | Stop all services                                              |
-| **T** | Start all services                                             |
-| **D** | Delete the web stack (preserves `www\` files and MariaDB data) |
-| **Q** | Quit                                                           |
+| Key   | Action                                                                    |
+| ----- | ------------------------------------------------------------------------- |
+| **I** | Install the web stack (download + configure + start)                      |
+| **U** | Update outdated components (compares installed vs latest online versions) |
+| **R** | Restart Apache + MariaDB                                                  |
+| **S** | Stop all services                                                         |
+| **T** | Start all services (offers Windows service registration if not installed) |
+| **D** | Delete the web stack (preserves `www\` files and MariaDB data)            |
+| **Q** | Quit                                                                      |
 
 ## After Installation
 
@@ -164,7 +164,7 @@ Example `config.json`:
 ### SQLite3 DLL Fix
 
 - VS17 PHP builds (8.5+) bundle an incompatible `libsqlite3.dll` that causes a blocking "Entry Point Not Found" popup when loading `pdo_sqlite` or `sqlite3` extensions
-- The installer downloads the latest compatible `sqlite3.dll` from sqlite.org and replaces the bundled version in both the PHP root AND Apache's `bin/` directory — allowing both SQLite extensions to load cleanly
+- The installer downloads the latest compatible `sqlite3.dll` from [sqlite.org](https://sqlite.org/) and replaces the bundled version in both the PHP root AND Apache's `bin/` directory — allowing both SQLite extensions to load cleanly
 
 ### MariaDB
 
@@ -175,14 +175,15 @@ Example `config.json`:
 
 ### phpMyAdmin
 
-- Auto-generated `config.inc.php` with blowfish secret, blank-password root login, and correct 1-based server indexing (`$i = 1`)
+- Auto-generated `config.inc.php` with blowfish secret, blank-password root login
 - Version detected from the installed README and shown in the dashboard
+- Click on `Operations` within any user database to setup `pma\_` controls
 
 ## Prerequisites
 
 - **Windows 10/11** (x64 only — Intel/AMD 64-bit; ARM64 is not supported)
 - **Run as Administrator** (required for port 80 binding)
-- **Visual C++ Redistributable** — Apache Lounge VS18 and MariaDB 12.x require the [VC++ Redistributable (VS 2017–2026) x64](https://aka.ms/vs/17/release/vc_redist.x64.exe). The installer **automatically checks** if it's installed and offers a one-click silent install if missing.
+- **Visual C++ Redistributable** — Apache Lounge VS18 and MariaDB 12.x require the [VC++ Redistributable (VS 2017–2026) x64](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170). The installer **automatically checks** if it's installed and offers a one-click silent install if missing.
 
 ## Delete / Reinstall — Database Safety
 
@@ -205,13 +206,15 @@ Say **yes** and your databases are moved back — MariaDB picks them up without 
 
 ## Windows Service Registration
 
-After install or update, the script offers to register Apache and MariaDB as Windows services:
+During install, the script asks whether to register Apache and MariaDB as Windows services **before** starting them — avoiding any start-stop-restart cycle:
 
 ```
 Install as Windows services (auto-start on boot)? [y/N]
 ```
 
-Say **yes** and two services are created — `getPHP_Apache` and `getPHP_MariaDB` — set to auto-start. After a reboot your stack is running without opening the script. The start/stop/restart dashboard commands (`T`/`S`/`R`) automatically detect service mode and use `Start-Service`/`Stop-Service` instead of process management.
+Say **yes** and two services are created — `getPHP_Apache` and `getPHP_MariaDB` — set to auto-start. After a reboot your stack is running without opening the script.
+
+If you skip registration during install, the **T** (Start) command will offer to register them on first use. The hint `(offers Windows service registration)` appears next to **T** in the dashboard until services are installed — then it disappears. **R** (Restart) and **S** (Stop) work silently regardless.
 
 Services are automatically removed when you delete the stack (`D`).
 
