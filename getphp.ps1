@@ -4,8 +4,8 @@
 #  Github: https://github.com/getphporg/getphp
 #  Author: Simon Field (aka - DaFa)
 #  License: MIT
-#  Date: 2024-06-06
-#  Version: 1.0.2
+#  Date: 2024-06-07
+#  Version: 1.0.3
 # ============================================================
 #Requires -RunAsAdministrator
 
@@ -135,12 +135,17 @@ function Save-Config {
     }
 
     if ($Versions) {
-        # Convert from PSCustomObject (JSON round-trip) or accept hashtable
-        $v = @{}
-        foreach ($prop in $Versions.PSObject.Properties) {
-            $v[$prop.Name] = $prop.Value
+        if ($Versions -is [hashtable]) {
+            $config.versions = [PSCustomObject]$Versions
         }
-        $config.versions = $v
+        else {
+            # Convert from PSCustomObject (JSON round-trip)
+            $v = @{}
+            foreach ($prop in $Versions.PSObject.Properties) {
+                $v[$prop.Name] = $prop.Value
+            }
+            $config.versions = [PSCustomObject]$v
+        }
     }
     if ($PathEntries) { $config.path_entries = $PathEntries }
 
@@ -222,7 +227,7 @@ function Remove-FromPath {
 function Test-VcRedistInstalled {
 # Checks whether Visual C++ Redistributable 14.51+ (VS 2017-2026) x64 is installed.
 # Required by Apache Lounge VS18 and MariaDB 12.x.
-    $minVersion = [version]"14.51.0"
+    $minVersion = [version]"14.51.36231"
 
     $uninstallPaths = @(
         "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
@@ -250,32 +255,74 @@ function Test-VcRedistInstalled {
     return $false
 }
 
+function Get-VcRedistVersion {
+# Returns the installed VC++ Redistributable version, or $null if not found.
+    $uninstallPaths = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
+    $latest = [version]"0.0.0.0"
+    foreach ($path in $uninstallPaths) {
+        $items = Get-ItemProperty -Path $path -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -match "Microsoft Visual C\+\+ .*Redistributable.*x64" }
+        foreach ($item in $items) {
+            if ($item.DisplayVersion) {
+                try {
+                    $ver = [version]$item.DisplayVersion
+                    if ($ver -gt $latest) { $latest = $ver }
+                } catch { }
+            }
+        }
+    }
+    if ($latest -eq [version]"0.0.0.0") { return $null }
+    return $latest
+}
+
 function Install-VcRedist {
-# Downloads and silently installs the Visual C++ Redistributable (VS 2017-2026) x64.
+# Installs or upgrades the Visual C++ Redistributable (VS 2017-2026) x64.
+# Required by Apache Lounge VS18 and MariaDB 12.x — minimum version 14.51.36231.
+# Uses winget (handles upgrades correctly where the direct installer skips them).
+    if (Test-VcRedistInstalled) {
+        Write-Ok "Visual C++ Redistributable already meets minimum version requirement"
+        return
+    }
+
+    Write-Info "Installing/upgrading Visual C++ Redistributable (VS 2017-2026) x64..."
+
+    # winget handles upgrades correctly (direct installer skips when already present)
+    $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+    if ($winget) {
+        $proc = Start-Process -FilePath 'winget.exe' -ArgumentList @(
+            'install', '--id', 'Microsoft.VCRedist.2015+.x64',
+            '--exact', '--silent', '--accept-package-agreements', '--accept-source-agreements'
+        ) -Wait -PassThru -NoNewWindow
+
+        if ($proc.ExitCode -eq 0) {
+            Write-Ok "Visual C++ Redistributable installed/upgraded via winget"
+            return
+        }
+        Write-Warn "winget exited with code $($proc.ExitCode). Trying direct download..."
+    }
+
+    # Fallback: direct download (for systems without winget)
     $installer = "$env:TEMP\vc_redist.x64.exe"
-
     try {
-        Write-Info "Downloading Visual C++ Redistributable (VS 2017-2026) x64..."
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -Uri "https://aka.ms/vc14/vc_redist.x64.exe" -OutFile $installer
-
+        Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile $installer
         Write-Info "Running installer (silent -- this may take a moment)..."
         $proc = Start-Process -FilePath $installer -ArgumentList "/install", "/quiet", "/norestart" -Wait -PassThru
-
         Remove-Item $installer -Force -ErrorAction SilentlyContinue
-
         if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010) {
             Write-Ok "Visual C++ Redistributable installed successfully"
-            # 3010 = success, reboot required — unlikely with /norestart but handle gracefully
         }
         else {
-            Write-Warn "Installer exited with code $($proc.ExitCode). You may need to install manually:"
-            Write-Info "  https://aka.ms/vc14/vc_redist.x64.exe"
+            Write-Warn "Installer exited with code $($proc.ExitCode). Install manually:"
+            Write-Info "  https://aka.ms/vs/17/release/vc_redist.x64.exe"
         }
     }
     catch {
         Write-Err "Failed to download or install VC++ Redistributable: $_"
-        Write-Info "Please install manually: https://aka.ms/vc14/vc_redist.x64.exe"
+        Write-Info "Install manually: https://aka.ms/vs/17/release/vc_redist.x64.exe"
         Remove-Item $installer -Force -ErrorAction SilentlyContinue
     }
 }
@@ -287,112 +334,143 @@ function Install-VcRedist {
 function Get-LatestApacheUrl {
     Write-Info "Resolving Apache (Apache Lounge - latest VS18 x64 build)..."
 
-    try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $maxRetries = 3
+    $retryDelay = 5
 
-        $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-        $html = Invoke-WebRequest -Uri "https://www.apachelounge.com/download/" -UseBasicParsing -Headers @{ "User-Agent" = $ua }
+    for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-        $bestScore = $null
-        $bestUrl   = $null
+            $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+            $html = Invoke-WebRequest -Uri "https://www.apachelounge.com/download/" -UseBasicParsing -Headers @{ "User-Agent" = $ua }
 
-        # Match Apache Lounge download links: /download/VS##/binaries/httpd-X.Y.Z-BUILD-Win64-VS##.zip
-        $pattern = 'href="(/download/VS(\d+)/binaries/httpd-([\d.]+)-(\d+)-Win64-VS\d+\.zip)"'
-        $rxMatches = [regex]::Matches($html.Content, $pattern)
+            $bestScore = $null
+            $bestUrl   = $null
 
-        foreach ($m in $rxMatches) {
-            $vsVer    = [int]$m.Groups[2].Value
-            $httpdVer = $m.Groups[3].Value
-            $build    = [int]$m.Groups[4].Value
+            # Match Apache Lounge download links: /download/VS##/binaries/httpd-X.Y.Z-BUILD-Win64-VS##.zip
+            $pattern = 'href="(/download/VS(\d+)/binaries/httpd-([\d.]+)-(\d+)-Win64-VS\d+\.zip)"'
+            $rxMatches = [regex]::Matches($html.Content, $pattern)
 
-            # Prefer VS18 (VS2022), fall back to VS17
-            $score = ($vsVer * 1000000) + ([version]$httpdVer).Major * 10000 + ([version]$httpdVer).Minor * 100 + $build
+            foreach ($m in $rxMatches) {
+                $vsVer    = [int]$m.Groups[2].Value
+                $httpdVer = $m.Groups[3].Value
+                $build    = [int]$m.Groups[4].Value
 
-            if ($null -eq $bestScore -or $score -gt $bestScore) {
-                $bestScore = $score
-                $bestUrl   = "https://www.apachelounge.com" + $m.Groups[1].Value
+                # Prefer VS18 (VS2022), fall back to VS17
+                $score = ($vsVer * 1000000) + ([version]$httpdVer).Major * 10000 + ([version]$httpdVer).Minor * 100 + $build
+
+                if ($null -eq $bestScore -or $score -gt $bestScore) {
+                    $bestScore = $score
+                    $bestUrl   = "https://www.apachelounge.com" + $m.Groups[1].Value
+                }
+            }
+
+            if ($bestUrl) {
+                Write-Ok "Apache -> $bestUrl"
+                return $bestUrl
+            }
+
+            throw "No Apache Lounge VS18 x64 download found"
+        }
+        catch {
+            if ($attempt -lt $maxRetries) {
+                Write-Warn "Attempt $attempt failed: $($_.Exception.Message)"
+                Write-Info "  Retrying in $retryDelay seconds..."
+                Start-Sleep -Seconds $retryDelay
+            }
+            else {
+                Write-Err "Failed to resolve Apache URL after $maxRetries attempts."
+                Write-Info "  Apache Lounge may be temporarily offline."
+                Write-Info "  Check https://www.apachelounge.com/ or try again later."
+                throw
             }
         }
-
-        if ($bestUrl) {
-            Write-Ok "Apache -> $bestUrl"
-            return $bestUrl
-        }
-
-        throw "No Apache Lounge VS18 x64 download found"
-    }
-    catch {
-        Write-Err "Failed to resolve Apache URL: $($_.Exception.Message)"
-        throw
     }
 }
 
 function Get-LatestPhpUrl {
     Write-Info "Resolving PHP (latest 8.x stable, thread-safe x64 - preferring VS17)..."
 
-    try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $json = Invoke-RestMethod -Uri "https://windows.php.net/downloads/releases/releases.json"
+    $maxRetries = 3
+    $retryDelay = 5
 
-        $latestVs17Version = $null
-        $latestVs17File    = $null
-        $latestVs16Version = $null
-        $latestVs16File    = $null
+    for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            $json = Invoke-RestMethod -Uri "https://windows.php.net/downloads/releases/releases.json"
 
-        foreach ($key in $json.PSObject.Properties.Name) {
-            $entry = $json.$key
+            $latestVs17Version = $null
+            $latestVs17File    = $null
+            $latestVs16Version = $null
+            $latestVs16File    = $null
 
-            if (-not $entry.version) { continue }
-            if ($entry.version -notmatch '^8\.\d+\.\d+$') { continue }
+            foreach ($key in $json.PSObject.Properties.Name) {
+                $entry = $json.$key
 
-            # Check VS17 thread-safe x64 (newer PHP 8.5+)
-            if ($entry.'ts-vs17-x64') {
-                $ver = [version]$entry.version
-                if ($null -eq $latestVs17Version -or $ver -gt $latestVs17Version) {
-                    $latestVs17Version = $ver
-                    $latestVs17File    = $entry.'ts-vs17-x64'.zip.path
+                if (-not $entry.version) { continue }
+                if ($entry.version -notmatch '^8\.\d+\.\d+$') { continue }
+
+                # Check VS17 thread-safe x64 (newer PHP 8.5+)
+                if ($entry.'ts-vs17-x64') {
+                    $ver = [version]$entry.version
+                    if ($null -eq $latestVs17Version -or $ver -gt $latestVs17Version) {
+                        $latestVs17Version = $ver
+                        $latestVs17File    = $entry.'ts-vs17-x64'.zip.path
+                    }
+                }
+
+                # Check VS16 thread-safe x64 (fallback)
+                if ($entry.'ts-vs16-x64') {
+                    $ver = [version]$entry.version
+                    if ($null -eq $latestVs16Version -or $ver -gt $latestVs16Version) {
+                        $latestVs16Version = $ver
+                        $latestVs16File    = $entry.'ts-vs16-x64'.zip.path
+                    }
                 }
             }
 
-            # Check VS16 thread-safe x64 (fallback)
-            if ($entry.'ts-vs16-x64') {
-                $ver = [version]$entry.version
-                if ($null -eq $latestVs16Version -or $ver -gt $latestVs16Version) {
-                    $latestVs16Version = $ver
-                    $latestVs16File    = $entry.'ts-vs16-x64'.zip.path
-                }
+            # Prefer VS17, fall back to VS16
+            if ($latestVs17File) {
+                $url = "https://windows.php.net/downloads/releases/$latestVs17File"
+                Write-Ok "PHP $latestVs17Version (VS17) -> $url"
+                return $url
+            }
+            elseif ($latestVs16File) {
+                $url = "https://windows.php.net/downloads/releases/$latestVs16File"
+                Write-Ok "PHP $latestVs16Version (VS16) -> $url"
+                return $url
+            }
+
+            throw "No compatible PHP 8.x TS x64 build found (VS17 or VS16)"
+        }
+        catch {
+            if ($attempt -lt $maxRetries) {
+                Write-Warn "Attempt $attempt failed: $($_.Exception.Message)"
+                Write-Info "  Retrying in $retryDelay seconds..."
+                Start-Sleep -Seconds $retryDelay
+            }
+            else {
+                Write-Err "Failed to resolve PHP URL after $maxRetries attempts."
+                Write-Info "  Check https://windows.php.net/ or try again later."
+                throw
             }
         }
-
-        # Prefer VS17, fall back to VS16
-        if ($latestVs17File) {
-            $url = "https://windows.php.net/downloads/releases/$latestVs17File"
-            Write-Ok "PHP $latestVs17Version (VS17) -> $url"
-            return $url
-        }
-        elseif ($latestVs16File) {
-            $url = "https://windows.php.net/downloads/releases/$latestVs16File"
-            Write-Ok "PHP $latestVs16Version (VS16) -> $url"
-            return $url
-        }
-
-        throw "No compatible PHP 8.x TS x64 build found (VS17 or VS16)"
-    }
-    catch {
-        Write-Err "Failed to resolve PHP URL: $($_.Exception.Message)"
-        throw
     }
 }
 
 function Get-LatestMariadbUrl {
     Write-Info "Resolving MariaDB (latest stable, Windows x64)..."
 
-    try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $maxRetries = 5
+    $retryDelay = 8
 
-        $json = Invoke-RestMethod -Uri "https://downloads.mariadb.org/rest-api/mariadb/"
+    for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-        $candidates = $json.major_releases | Where-Object { $_.release_status -eq "Stable" }
+            $json = Invoke-RestMethod -Uri "https://downloads.mariadb.org/rest-api/mariadb/"
+
+            $candidates = $json.major_releases | Where-Object { $_.release_status -eq "Stable" }
 
         if (-not $candidates) {
             throw "No Stable MariaDB releases found"
@@ -430,52 +508,74 @@ function Get-LatestMariadbUrl {
         }
 
         throw "Could not resolve MariaDB Windows x64 download URL"
-    }
-    catch {
-        Write-Err "Failed to resolve MariaDB URL: $($_.Exception.Message)"
-        throw
+        }
+        catch {
+            if ($attempt -lt $maxRetries) {
+                Write-Warn "Attempt $attempt failed: $($_.Exception.Message)"
+                Write-Info "  Retrying in $retryDelay seconds..."
+                Start-Sleep -Seconds $retryDelay
+            }
+            else {
+                Write-Err "Failed to resolve MariaDB URL after $maxRetries attempts."
+                Write-Info "  Check https://mariadb.org/download/ or try again later."
+                throw
+            }
+        }
     }
 }
 
 function Get-LatestPhpMyAdminUrl {
     Write-Info "Resolving phpMyAdmin (latest stable, all-languages)..."
 
-    try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $maxRetries = 3
+    $retryDelay = 5
 
-        $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-        $html = Invoke-WebRequest -Uri "https://www.phpmyadmin.net/downloads/" -UseBasicParsing -Headers @{ "User-Agent" = $ua }
+    for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-        $bestVersion = $null
-        $bestUrl     = $null
+            $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+            $html = Invoke-WebRequest -Uri "https://www.phpmyadmin.net/downloads/" -UseBasicParsing -Headers @{ "User-Agent" = $ua }
 
-        # Match stable releases only (not snapshots)
-        $pattern = 'href="(https://files\.phpmyadmin\.net/phpMyAdmin/([\d.]+)/phpMyAdmin-[\d.]+-all-languages\.zip)"'
-        $rxMatches = [regex]::Matches($html.Content, $pattern)
+            $bestVersion = $null
+            $bestUrl     = $null
 
-        foreach ($m in $rxMatches) {
-            $url = $m.Groups[1].Value
-            $ver = $m.Groups[2].Value
+            # Match stable releases only (not snapshots)
+            $pattern = 'href="(https://files\.phpmyadmin\.net/phpMyAdmin/([\d.]+)/phpMyAdmin-[\d.]+-all-languages\.zip)"'
+            $rxMatches = [regex]::Matches($html.Content, $pattern)
 
-            # Skip snapshots
-            if ($url -match "snapshot") { continue }
+            foreach ($m in $rxMatches) {
+                $url = $m.Groups[1].Value
+                $ver = $m.Groups[2].Value
 
-            if ($null -eq $bestVersion -or [version]$ver -gt [version]$bestVersion) {
-                $bestVersion = $ver
-                $bestUrl     = $url
+                # Skip snapshots
+                if ($url -match "snapshot") { continue }
+
+                if ($null -eq $bestVersion -or [version]$ver -gt [version]$bestVersion) {
+                    $bestVersion = $ver
+                    $bestUrl     = $url
+                }
+            }
+
+            if ($bestUrl) {
+                Write-Ok "phpMyAdmin $bestVersion -> $bestUrl"
+                return $bestUrl
+            }
+
+            throw "No phpMyAdmin stable download found"
+        }
+        catch {
+            if ($attempt -lt $maxRetries) {
+                Write-Warn "Attempt $attempt failed: $($_.Exception.Message)"
+                Write-Info "  Retrying in $retryDelay seconds..."
+                Start-Sleep -Seconds $retryDelay
+            }
+            else {
+                Write-Err "Failed to resolve phpMyAdmin URL after $maxRetries attempts."
+                Write-Info "  Check https://www.phpmyadmin.net/ or try again later."
+                throw
             }
         }
-
-        if ($bestUrl) {
-            Write-Ok "phpMyAdmin $bestVersion -> $bestUrl"
-            return $bestUrl
-        }
-
-        throw "No phpMyAdmin stable download found"
-    }
-    catch {
-        Write-Err "Failed to resolve phpMyAdmin URL: $($_.Exception.Message)"
-        throw
     }
 }
 
@@ -495,60 +595,106 @@ function Invoke-DownloadAndExtract($url, $dest, $label) {
     $zipPath  = Join-Path $TEMP_DOWNLOADS $filename
     $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 
-    try {
-        # MariaDB uses HTTP redirects that Invoke-WebRequest can't handle reliably.
-        # Use manual redirect-following downloader instead.
-        if ($url -like "*mariadb*") {
-            Write-Info "  (using redirect-resolving downloader)"
+    $maxRetries = 3
+    $retryDelay = 5
 
-            $current_url = $url
-            $max_redirects = 10
-            $i = 0
+    for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+        try {
+            if ($attempt -gt 1) {
+                Write-Info "  Retry $attempt of $maxRetries..."
+            }
 
-            while ($i -lt $max_redirects) {
-                $request = [System.Net.HttpWebRequest]::Create($current_url)
-                $request.Method = "GET"
-                $request.AllowAutoRedirect = $false
-                $request.UserAgent = $ua
+            # MariaDB uses HTTP redirects that Invoke-WebRequest can't handle reliably.
+            if ($url -like "*mariadb*") {
+                $current_url = $url
+                $max_redirects = 10
+                $i = 0
 
-                $response = $request.GetResponse()
-                $status = [int]$response.StatusCode
+                while ($i -lt $max_redirects) {
+                    $request = [System.Net.HttpWebRequest]::Create($current_url)
+                    $request.Method = "GET"
+                    $request.AllowAutoRedirect = $false
+                    $request.UserAgent = $ua
 
-                if ($status -ge 300 -and $status -lt 400) {
-                    $location = $response.Headers["Location"]
-                    if (-not $location) {
+                    $response = $request.GetResponse()
+                    $status = [int]$response.StatusCode
+
+                    if ($status -ge 300 -and $status -lt 400) {
+                        $location = $response.Headers["Location"]
+                        if (-not $location) {
+                            $response.Close()
+                            throw "Redirect without Location header"
+                        }
+                        $current_url = $location
                         $response.Close()
-                        throw "Redirect without Location header"
+                        $i++
+                        continue
                     }
-                    $current_url = $location
-                    $response.Close()
-                    $i++
-                    continue
+
+                    # Final URL reached — stream to file with progress
+                    $totalBytes = $response.ContentLength
+                    $stream = $null
+                    $fileStream = $null
+                    try {
+                        $stream = $response.GetResponseStream()
+                        $fileStream = [System.IO.File]::Create($zipPath)
+                        $buffer = New-Object byte[] 8192
+                        $bytesRead = 0
+                        $totalRead = 0
+                        $lastReport = 0
+
+                        while (($bytesRead = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                            $fileStream.Write($buffer, 0, $bytesRead)
+                            $totalRead += $bytesRead
+                            # Report progress every 1MB to avoid flooding
+                            if ($totalBytes -gt 0 -and ($totalRead - $lastReport) -ge 1048576) {
+                                $pct = [int](($totalRead / $totalBytes) * 100)
+                                Write-Progress -Activity "Downloading $label" -Status "$([math]::Round($totalRead/1MB,1)) MB / $([math]::Round($totalBytes/1MB,1)) MB" -PercentComplete $pct
+                                $lastReport = $totalRead
+                            }
+                        }
+                        Write-Progress -Activity "Downloading $label" -Completed
+                    }
+                    finally {
+                        if ($fileStream) { $fileStream.Close(); $fileStream.Dispose() }
+                        if ($stream)     { $stream.Close(); $stream.Dispose() }
+                        $response.Close()
+                    }
+                    break
                 }
 
-                # Final URL reached — stream to file
-                $stream = $response.GetResponseStream()
-                $fileStream = [System.IO.File]::Create($zipPath)
-                $stream.CopyTo($fileStream)
-                $fileStream.Close()
-                $stream.Close()
-                $response.Close()
-                break
+                if ($i -ge $max_redirects) {
+                    throw "Too many redirects resolving MariaDB download"
+                }
+            }
+            else {
+                # Try with progress bar first (no -UseBasicParsing), fall back if IE not available
+                try {
+                    Invoke-WebRequest -Uri $url -OutFile $zipPath -Headers @{ "User-Agent" = $ua }
+                }
+                catch [System.Management.Automation.MethodInvocationException] {
+                    Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing -Headers @{ "User-Agent" = $ua }
+                }
             }
 
-            if ($i -ge $max_redirects) {
-                throw "Too many redirects resolving MariaDB download"
+            # Download succeeded — break out of retry loop
+            break
+        }
+        catch {
+            Write-Progress -Activity "Downloading $label" -Completed
+            if ($attempt -lt $maxRetries) {
+                Write-Warn "  Download attempt $attempt failed: $($_.Exception.Message)"
+                Write-Info "  Retrying in $retryDelay seconds..."
+                # Force cleanup of any lingering file handles before delete
+                [System.GC]::Collect()
+                [System.GC]::WaitForPendingFinalizers()
+                Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds $retryDelay
+            }
+            else {
+                throw "Download failed for $label after $maxRetries attempts: $($_.Exception.Message)"
             }
         }
-        elseif ($url -like "*files.phpmyadmin*") {
-            Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing -MaximumRedirection 10 -Headers @{ "User-Agent" = $ua }
-        }
-        else {
-            Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing -Headers @{ "User-Agent" = $ua }
-        }
-    }
-    catch {
-        throw "Download failed for $label : $($_.Exception.Message)"
     }
 
     if (-not (Test-Path $zipPath)) {
@@ -916,7 +1062,7 @@ function Invoke-ConfigureMariaDb {
 
 function Invoke-ConfigurePhpMyAdmin {
     Write-Host ""
-    Write-Warn "Configuring phpMyAdmin..."
+    Write-Warn "Configuring phpMyAdmin, Test Script & System Paths..."
 
     $configPath = "$PHPMYADMIN_PATH\config.inc.php"
 
@@ -943,10 +1089,95 @@ function Invoke-ConfigurePhpMyAdmin {
 `$cfg['Servers'][`$i]['AllowNoPassword'] = true;
 `$cfg['UploadDir'] = '';
 `$cfg['SaveDir']   = '';
+`$cfg['DefaultConnectionCollation'] = 'utf8mb4_general_ci';
 "@
 
     Set-Content -Path $configPath -Value $config
     Write-Ok "phpMyAdmin configured (root / blank password)"
+}
+
+function Invoke-ConfigurePmaStorage {
+# Creates the phpmyadmin config storage database and imports the schema.
+# Enables bookmarks, query history, table tracking, designer, etc.
+    Write-Host ""
+    Write-Warn "Configuring phpMyAdmin storage..."
+
+    # Check if already configured
+    $testResult = & "$MARIADB_PATH\bin\mariadb.exe" -u root --skip-password -e "SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA='phpmyadmin' AND TABLE_NAME='pma__bookmark'" 2>&1
+    if ($LASTEXITCODE -eq 0 -and $testResult -match '1') {
+        Write-Ok "phpMyAdmin storage already configured — skipping"
+        # Still ensure config.inc.php has the storage directives
+        $configPath = "$PHPMYADMIN_PATH\config.inc.php"
+        if (Test-Path $configPath) {
+            $existing = Get-Content $configPath -Raw -Encoding UTF8
+            if ($existing -notmatch "pmadb") {
+                $storageConfig = Get-PmaStorageConfig
+                Add-Content -Path $configPath -Value $storageConfig -Encoding UTF8
+                Write-Ok "Storage config added to config.inc.php"
+            }
+        }
+        return
+    }
+
+    # Find create_tables.sql
+    $sqlFile = $null
+    foreach ($candidate in @("$PHPMYADMIN_PATH\sql\create_tables.sql", "$PHPMYADMIN_PATH\examples\create_tables.sql")) {
+        if (Test-Path $candidate) { $sqlFile = $candidate; break }
+    }
+    if (-not $sqlFile) {
+        Write-Warn "create_tables.sql not found in phpMyAdmin. Storage features unavailable."
+        return
+    }
+
+    # Create database and import schema
+    Write-Info "Creating phpmyadmin storage database..."
+    & "$MARIADB_PATH\bin\mariadb.exe" -u root --skip-password -e "CREATE DATABASE IF NOT EXISTS phpmyadmin" 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "Failed to create phpmyadmin database"
+        return
+    }
+
+    Write-Info "Importing phpMyAdmin storage schema..."
+    Get-Content $sqlFile | & "$MARIADB_PATH\bin\mariadb.exe" -u root --skip-password phpmyadmin 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "Failed to import storage schema"
+        return
+    }
+
+    # Append storage config to config.inc.php
+    $configPath = "$PHPMYADMIN_PATH\config.inc.php"
+    $storageConfig = Get-PmaStorageConfig
+    Add-Content -Path $configPath -Value $storageConfig -Encoding UTF8
+
+    Write-Ok "phpMyAdmin storage configured (bookmarks, history, designer, etc.)"
+}
+
+function Get-PmaStorageConfig {
+# Returns the phpMyAdmin storage configuration block for config.inc.php
+    return @"
+
+/* phpMyAdmin configuration storage */
+`$cfg['Servers'][`$i]['pmadb']           = 'phpmyadmin';
+`$cfg['Servers'][`$i]['bookmarktable']   = 'pma__bookmark';
+`$cfg['Servers'][`$i]['relation']        = 'pma__relation';
+`$cfg['Servers'][`$i]['table_info']      = 'pma__table_info';
+`$cfg['Servers'][`$i]['table_coords']    = 'pma__table_coords';
+`$cfg['Servers'][`$i]['pdf_pages']       = 'pma__pdf_pages';
+`$cfg['Servers'][`$i]['column_info']     = 'pma__column_info';
+`$cfg['Servers'][`$i]['history']         = 'pma__history';
+`$cfg['Servers'][`$i]['table_uiprefs']   = 'pma__table_uiprefs';
+`$cfg['Servers'][`$i]['tracking']        = 'pma__tracking';
+`$cfg['Servers'][`$i]['userconfig']      = 'pma__userconfig';
+`$cfg['Servers'][`$i]['recent']          = 'pma__recent';
+`$cfg['Servers'][`$i]['favorite']        = 'pma__favorite';
+`$cfg['Servers'][`$i]['users']           = 'pma__users';
+`$cfg['Servers'][`$i]['usergroups']      = 'pma__usergroups';
+`$cfg['Servers'][`$i]['navigationhiding'] = 'pma__navigationhiding';
+`$cfg['Servers'][`$i]['savedsearches']   = 'pma__savedsearches';
+`$cfg['Servers'][`$i]['central_columns'] = 'pma__central_columns';
+`$cfg['Servers'][`$i]['designer_settings'] = 'pma__designer_settings';
+`$cfg['Servers'][`$i]['export_templates'] = 'pma__export_templates';
+"@
 }
 
 # ============================================================
@@ -1113,7 +1344,7 @@ function Install-AsServices {
         & "$APACHE_PATH\bin\httpd.exe" -k install -n $SERVICE_APACHE 2>&1 | Out-Null
         if ($LASTEXITCODE -eq 0) {
             # Set to auto-start
-            sc.exe config $SERVICE_APACHE start=auto 2>&1 | Out-Null
+            Set-Service -Name $SERVICE_APACHE -StartupType Automatic -ErrorAction SilentlyContinue
             Write-Ok "$SERVICE_APACHE service installed"
         }
         else {
@@ -1130,7 +1361,7 @@ function Install-AsServices {
         $dataDir = "$MARIADB_PATH\data"
         & $mysqld --install $SERVICE_MARIADB --datadir="$dataDir" 2>&1 | Out-Null
         if ($LASTEXITCODE -eq 0) {
-            sc.exe config $SERVICE_MARIADB start=auto 2>&1 | Out-Null
+            Set-Service -Name $SERVICE_MARIADB -StartupType Automatic -ErrorAction SilentlyContinue
             Write-Ok "$SERVICE_MARIADB service installed"
         }
         else {
@@ -1157,7 +1388,7 @@ function Request-ServiceRegistration {
 
         if (-not (Get-Service -Name $SERVICE_APACHE -ErrorAction SilentlyContinue)) {
             & "$APACHE_PATH\bin\httpd.exe" -k install -n $SERVICE_APACHE 2>&1 | Out-Null
-            sc.exe config $SERVICE_APACHE start=auto 2>&1 | Out-Null
+            Set-Service -Name $SERVICE_APACHE -StartupType Automatic -ErrorAction SilentlyContinue
             Write-Ok "$SERVICE_APACHE service installed"
         }
 
@@ -1165,7 +1396,7 @@ function Request-ServiceRegistration {
             $mysqld = if (Test-Path "$MARIADB_PATH\bin\mariadbd.exe") { "$MARIADB_PATH\bin\mariadbd.exe" } else { "$MARIADB_PATH\bin\mysqld.exe" }
             $dataDir = "$MARIADB_PATH\data"
             & $mysqld --install $SERVICE_MARIADB --datadir="$dataDir" 2>&1 | Out-Null
-            sc.exe config $SERVICE_MARIADB start=auto 2>&1 | Out-Null
+            Set-Service -Name $SERVICE_MARIADB -StartupType Automatic -ErrorAction SilentlyContinue
             Write-Ok "$SERVICE_MARIADB service installed"
         }
 
@@ -1192,11 +1423,11 @@ function Remove-Services {
     }
 
     if ($apacheSvc) {
-        sc.exe delete $SERVICE_APACHE 2>&1 | Out-Null
+        & "$env:SystemRoot\System32\sc.exe" delete $SERVICE_APACHE 2>&1 | Out-Null
         Write-Ok "$SERVICE_APACHE service removed"
     }
     if ($mariadbSvc) {
-        sc.exe delete $SERVICE_MARIADB 2>&1 | Out-Null
+        & "$env:SystemRoot\System32\sc.exe" delete $SERVICE_MARIADB 2>&1 | Out-Null
         Write-Ok "$SERVICE_MARIADB service removed"
     }
 }
@@ -1213,19 +1444,46 @@ function Invoke-InstallWebStack {
 
     # Pre-flight: VC++ Redistributable check (required by Apache VS18 + MariaDB 12.x)
     Write-Host ""
-    if (Test-VcRedistInstalled) {
-        Write-Ok "Visual C++ Redistributable (VS 2017-2026) x64 — detected"
+    $vcVer = Get-VcRedistVersion
+    if ($vcVer) {
+        $minVc = [version]"14.51.36231"
+        if ($vcVer -ge $minVc) {
+            Write-Ok "Visual C++ Redistributable x64 — $vcVer (meets minimum $minVc)"
+        }
+        else {
+            Write-Warn "Visual C++ Redistributable x64 — $vcVer (BELOW minimum $minVc)"
+            Write-Info "  This is required by Apache Lounge VS18 and MariaDB 12.x."
+            Write-Host ""
+            Write-Bold "  An updated Visual C++ Redistributable must be installed to continue."
+            $choice = Read-Host "  Install it now? [Y/n]"
+            if ($choice -eq "" -or $choice -match "^[Yy]") {
+                Install-VcRedist
+                if (-not (Test-VcRedistInstalled)) {
+                    Write-Err "VC++ Redistributable upgrade failed or requires reboot. Aborting."
+                    return
+                }
+            }
+            else {
+                Write-Err "VC++ Redistributable is required. Aborting installation."
+                return
+            }
+        }
     }
     else {
-        Write-Warn "Visual C++ Redistributable (VS 2017-2026) x64 is NOT installed."
+        Write-Warn "Visual C++ Redistributable x64 is NOT installed."
         Write-Info "  This is required by Apache Lounge VS18 and MariaDB 12.x."
         Write-Host ""
         $choice = Read-Host "  Install it now? [Y/n]"
         if ($choice -eq "" -or $choice -match "^[Yy]") {
             Install-VcRedist
+            if (-not (Test-VcRedistInstalled)) {
+                Write-Err "VC++ Redistributable installation failed or requires reboot. Aborting."
+                return
+            }
         }
         else {
-            Write-Warn "Skipping. Apache or MariaDB may fail to start without it."
+            Write-Err "VC++ Redistributable is required. Aborting installation."
+            return
         }
     }
     Write-Host ""
@@ -1251,11 +1509,10 @@ function Invoke-InstallWebStack {
         return
     }
 
-    # Download and extract
+    # Download and extract (Apache, PHP, MariaDB only — PMA deferred)
     Invoke-DownloadAndExtract $apacheUrl  $APACHE_PATH     "Apache"
     Invoke-DownloadAndExtract $phpUrl     $PHP_PATH        "PHP"
     Invoke-DownloadAndExtract $mariadbUrl $MARIADB_PATH    "MariaDB"
-    Invoke-DownloadAndExtract $pmaUrl     $PHPMYADMIN_PATH "phpMyAdmin"
 
     # Copy PHP dependency DLLs to Apache bin (ICU, curl deps, etc.)
     # Windows DLL search starts from httpd.exe's directory, not PHP's.
@@ -1287,6 +1544,11 @@ function Invoke-InstallWebStack {
     }
 
     Invoke-ConfigureMariaDb
+
+    # ── phpMyAdmin ──────────────────────────────────────────
+    Write-Host ""
+    Write-Bold "── phpMyAdmin ──"
+    Invoke-DownloadAndExtract $pmaUrl     $PHPMYADMIN_PATH "phpMyAdmin"
     Invoke-ConfigurePhpMyAdmin
 
     # Create test file
@@ -1324,13 +1586,13 @@ function Invoke-InstallWebStack {
             # Register services now, then Start-WebStackServices will use service control
             Write-Info "Registering Windows services..."
             & "$APACHE_PATH\bin\httpd.exe" -k install -n $SERVICE_APACHE 2>&1 | Out-Null
-            sc.exe config $SERVICE_APACHE start=auto 2>&1 | Out-Null
+            Set-Service -Name $SERVICE_APACHE -StartupType Automatic -ErrorAction SilentlyContinue
             Write-Ok "$SERVICE_APACHE service installed"
 
             $mysqld = if (Test-Path "$MARIADB_PATH\bin\mariadbd.exe") { "$MARIADB_PATH\bin\mariadbd.exe" } else { "$MARIADB_PATH\bin\mysqld.exe" }
             $dataDir = "$MARIADB_PATH\data"
             & $mysqld --install $SERVICE_MARIADB --datadir="$dataDir" 2>&1 | Out-Null
-            sc.exe config $SERVICE_MARIADB start=auto 2>&1 | Out-Null
+            Set-Service -Name $SERVICE_MARIADB -StartupType Automatic -ErrorAction SilentlyContinue
             Write-Ok "$SERVICE_MARIADB service installed"
         }
         else {
@@ -1340,6 +1602,9 @@ function Invoke-InstallWebStack {
 
     # Start services (uses service control if registered, process mode otherwise)
     Start-WebStackServices
+
+    # phpMyAdmin configuration storage (bookmarks, history, designer, etc.)
+    Invoke-ConfigurePmaStorage
 
     # Save config with final state (including service registration decision)
     Save-Config -InstallPath $BASE -Versions $versions -PathEntries $pathEntries -ServicesRegistered:(Test-ServicesInstalled)
@@ -1442,6 +1707,10 @@ function Invoke-UpdateWebStack {
     }
 
     Start-WebStackServices
+
+    # phpMyAdmin storage: reconfigure if phpMyAdmin was updated
+    if ($needsPma) { Invoke-ConfigurePmaStorage }
+
     Write-Ok "Update complete"
 
     # Update config with new versions (preserve existing for components not updated)
@@ -1490,7 +1759,7 @@ function Invoke-DeleteWebStack {
 
     $confirm = Read-Host "Type 'DELETE' to confirm"
 
-    if ($confirm -ne "DELETE") {
+    if ($confirm -cne "DELETE") {
         Write-Info "Nothing was deleted."
         return
     }
@@ -1632,6 +1901,25 @@ function Show-Dashboard {
         Write-Host "not available" -ForegroundColor Red
     }
 
+    # ---- System Prerequisites ----
+    Write-Host ""
+    Write-Host "System Prerequisites:" -ForegroundColor White
+    Write-Host "~~~~~~~~~~~~~~~~~~~~~"
+    Write-Host "VC++ Redist ---> " -NoNewline
+    $vcVer = Get-VcRedistVersion
+    if ($vcVer) {
+        $minVc = [version]"14.51.36231"
+        if ($vcVer -ge $minVc) {
+            Write-Host "$vcVer" -ForegroundColor Green
+        }
+        else {
+            Write-Host "$vcVer (update recommended -- press V)" -ForegroundColor Yellow
+        }
+    }
+    else {
+        Write-Host "not installed (press V to install)" -ForegroundColor Red
+    }
+
     # Windows Services (always shown when stack is complete)
     Write-Host ""
     Write-Host "Windows Services:" -ForegroundColor White
@@ -1727,6 +2015,63 @@ if ($os_architecture -ne [System.Runtime.InteropServices.Architecture]::X64) {
     exit 1
 }
 
+# ---- VC++ Redistributable: system prerequisite (BLOCKING) ----
+Write-Host ""
+Write-Host "========================================" -ForegroundColor White
+Write-Host "  SYSTEM PREREQUISITE CHECK" -ForegroundColor White
+Write-Host "========================================" -ForegroundColor White
+Write-Host ""
+
+while (-not (Test-VcRedistInstalled)) {
+    Write-Warn "Visual C++ Redistributable (VS 2017-2026) x64 is required."
+    Write-Info "  Minimum version: 14.51.36231"
+    $vcVer = Get-VcRedistVersion
+    if ($vcVer) {
+        Write-Info "  Installed version: $vcVer (outdated -- update required)"
+    }
+    else {
+        Write-Info "  Status: not installed"
+    }
+    Write-Info "  This is required by Apache Lounge VS18 and MariaDB 12.x."
+    Write-Info "  Without it, Apache and MariaDB cannot start."
+    Write-Host ""
+    $choice = Read-Host "  Install/update now? [Y/n] (n = exit)"
+    if ($choice -eq "" -or $choice -match "^[Yy]") {
+        $vcBefore = Get-VcRedistVersion
+        Install-VcRedist
+        if (-not (Test-VcRedistInstalled)) {
+            $vcAfter = Get-VcRedistVersion
+            if ($vcAfter -eq $vcBefore) {
+                # Installer succeeded but version didn't change — reboot required
+                Write-Host ""
+                Write-Warn "The installer completed but a reboot is required to finish the update."
+                Write-Info "  The new VC++ files are queued for replacement on next boot."
+                Write-Host ""
+                $rebootChoice = Read-Host "  Reboot now? [Y/n] (n = exit)"
+                if ($rebootChoice -eq "" -or $rebootChoice -match "^[Yy]") {
+                    Write-Info "Rebooting..."
+                    Restart-Computer -Force
+                }
+                else {
+                    Write-Err "Cannot proceed without updated VC++ Redistributable. Exiting."
+                    Write-Info "  Re-run this script after reboot."
+                    Pause
+                    exit 1
+                }
+            }
+        }
+    }
+    else {
+        Write-Host ""
+        Write-Err "VC++ Redistributable is required. Exiting."
+        Write-Host ""
+        Pause
+        exit 1
+    }
+}
+Write-Host ""
+Write-Ok "Visual C++ Redistributable — OK"
+
 # ---- Install location (config-aware) -------------------------
 
 $config = Get-Config
@@ -1794,13 +2139,6 @@ if (-not $config) {
     Write-Info "  phpMyAdmin: http://localhost/phpmyadmin"
 }
 
-# ---- VC++ Redistributable startup check ----
-if (-not (Test-VcRedistInstalled)) {
-    Write-Warn "Visual C++ Redistributable (VS 2017-2026) x64 is NOT installed."
-    Write-Info "  This is required by Apache Lounge VS18 and MariaDB 12.x."
-    Write-Info "  The installer will offer to install it when you press 'I'."
-    Write-Host ""
-}
 
 # ---- Sync config service state with reality ----
 if ($config -and (Test-StackComplete)) {

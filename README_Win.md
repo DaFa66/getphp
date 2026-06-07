@@ -97,7 +97,7 @@ Q  Quit
 | **I** | Install the web stack (download + configure + start)                      |
 | **U** | Update outdated components (compares installed vs latest online versions) |
 | **R** | Restart Apache + MariaDB                                                  |
-| **S** | Stop all services (offers to unregister if Windows services installed) |
+| **S** | Stop all services (offers to unregister if Windows services installed)    |
 | **T** | Start all services (offers Windows service registration if not installed) |
 | **D** | Delete the web stack (preserves `www\` files and MariaDB data)            |
 | **Q** | Quit                                                                      |
@@ -184,7 +184,7 @@ Example `config.json`:
 
 - Auto-generated `config.inc.php` with blowfish secret, blank-password root login
 - Version detected from the installed README and shown in the dashboard
-- Click on `Operations` within any user database to setup `pma\_` controls
+- Click on `Operations` within any user database to setup `pma\_` configuration storage
 
 ## Prerequisites
 
