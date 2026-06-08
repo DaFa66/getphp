@@ -12,6 +12,14 @@
 # ---- Config -------------------------------------------------
 $TEMP_DOWNLOADS  = "$env:TEMP\webstack_downloads"
 
+# Pinned fallback URLs — used when live scraping/API resolution fails.
+# These point to the last known-good versions for each component.
+# Update these when bumping the pinned versions.
+$FALLBACK_URLS = @{
+    Apache     = ""
+    phpMyAdmin = ""
+}
+
 # ---- Colours -----------------------------------------------
 function Write-Ok($msg)    { Write-Host "[  OK  ]  $msg" -ForegroundColor Green }
 function Write-Err($msg)   { Write-Host "[ Error ]  $msg" -ForegroundColor Red }
@@ -306,24 +314,45 @@ function Install-VcRedist {
 
     # Fallback: direct download (for systems without winget)
     $installer = "$env:TEMP\vc_redist.x64.exe"
-    try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile $installer
-        Write-Info "Running installer (silent -- this may take a moment)..."
-        $proc = Start-Process -FilePath $installer -ArgumentList "/install", "/quiet", "/norestart" -Wait -PassThru
-        Remove-Item $installer -Force -ErrorAction SilentlyContinue
-        if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010) {
-            Write-Ok "Visual C++ Redistributable installed successfully"
+
+    $maxRetries = 3
+    $retryDelay = 5
+    $downloaded = $false
+
+    for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+        try {
+            if ($attempt -gt 1) {
+                Write-Info "  Retry $attempt of $maxRetries..."
+            }
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile $installer
+            $downloaded = $true
+            break
         }
-        else {
-            Write-Warn "Installer exited with code $($proc.ExitCode). Install manually:"
-            Write-Info "  https://aka.ms/vs/17/release/vc_redist.x64.exe"
+        catch {
+            if ($attempt -lt $maxRetries) {
+                Write-Warn "Download attempt $attempt failed. Retrying in $retryDelay seconds..."
+                Start-Sleep -Seconds $retryDelay
+            }
+            else {
+                Write-Err "Failed to download VC++ Redistributable after $maxRetries attempts: $_"
+                Write-Info "Install manually: https://aka.ms/vs/17/release/vc_redist.x64.exe"
+                return
+            }
         }
     }
-    catch {
-        Write-Err "Failed to download or install VC++ Redistributable: $_"
-        Write-Info "Install manually: https://aka.ms/vs/17/release/vc_redist.x64.exe"
-        Remove-Item $installer -Force -ErrorAction SilentlyContinue
+
+    if (-not $downloaded) { return }
+
+    Write-Info "Running installer (silent -- this may take a moment)..."
+    $proc = Start-Process -FilePath $installer -ArgumentList "/install", "/quiet", "/norestart" -Wait -PassThru
+    Remove-Item $installer -Force -ErrorAction SilentlyContinue
+    if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010) {
+        Write-Ok "Visual C++ Redistributable installed successfully"
+    }
+    else {
+        Write-Warn "Installer exited with code $($proc.ExitCode). Install manually:"
+        Write-Info "  https://aka.ms/vs/17/release/vc_redist.x64.exe"
     }
 }
 
@@ -379,8 +408,12 @@ function Get-LatestApacheUrl {
                 Start-Sleep -Seconds $retryDelay
             }
             else {
-                Write-Err "Failed to resolve Apache URL after $maxRetries attempts."
-                Write-Info "  Apache Lounge may be temporarily offline."
+                Write-Warn "Live resolution failed after $maxRetries attempts."
+                if ($FALLBACK_URLS.Apache) {
+                    Write-Info "  Falling back to pinned Apache URL: $($FALLBACK_URLS.Apache)"
+                    return $FALLBACK_URLS.Apache
+                }
+                Write-Err "Failed to resolve Apache URL and no fallback URL is configured."
                 Write-Info "  Check https://www.apachelounge.com/ or try again later."
                 throw
             }
@@ -571,7 +604,12 @@ function Get-LatestPhpMyAdminUrl {
                 Start-Sleep -Seconds $retryDelay
             }
             else {
-                Write-Err "Failed to resolve phpMyAdmin URL after $maxRetries attempts."
+                Write-Warn "Live resolution failed after $maxRetries attempts."
+                if ($FALLBACK_URLS.phpMyAdmin) {
+                    Write-Info "  Falling back to pinned phpMyAdmin URL: $($FALLBACK_URLS.phpMyAdmin)"
+                    return $FALLBACK_URLS.phpMyAdmin
+                }
+                Write-Err "Failed to resolve phpMyAdmin URL and no fallback URL is configured."
                 Write-Info "  Check https://www.phpmyadmin.net/ or try again later."
                 throw
             }
@@ -604,62 +642,33 @@ function Invoke-DownloadAndExtract($url, $dest, $label) {
                 Write-Info "  Retry $attempt of $maxRetries..."
             }
 
-            # MariaDB uses HTTP redirects that Invoke-WebRequest can't handle reliably.
+            # MariaDB download URLs redirect through a CDN chain that
+            # Invoke-WebRequest with auto-redirect sometimes mishandles.
+            # Follow redirects manually, then download the final URL.
             if ($url -like "*mariadb*") {
                 $current_url = $url
                 $max_redirects = 10
                 $i = 0
 
                 while ($i -lt $max_redirects) {
-                    $request = [System.Net.HttpWebRequest]::Create($current_url)
-                    $request.Method = "GET"
-                    $request.AllowAutoRedirect = $false
-                    $request.UserAgent = $ua
-
-                    $response = $request.GetResponse()
+                    $response = Invoke-WebRequest -Uri $current_url -Method Get `
+                        -MaximumRedirection 0 -Headers @{ "User-Agent" = $ua } `
+                        -ErrorAction Stop
                     $status = [int]$response.StatusCode
 
                     if ($status -ge 300 -and $status -lt 400) {
                         $location = $response.Headers["Location"]
                         if (-not $location) {
-                            $response.Close()
                             throw "Redirect without Location header"
                         }
                         $current_url = $location
-                        $response.Close()
                         $i++
                         continue
                     }
 
-                    # Final URL reached — stream to file with progress
-                    $totalBytes = $response.ContentLength
-                    $stream = $null
-                    $fileStream = $null
-                    try {
-                        $stream = $response.GetResponseStream()
-                        $fileStream = [System.IO.File]::Create($zipPath)
-                        $buffer = New-Object byte[] 8192
-                        $bytesRead = 0
-                        $totalRead = 0
-                        $lastReport = 0
-
-                        while (($bytesRead = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
-                            $fileStream.Write($buffer, 0, $bytesRead)
-                            $totalRead += $bytesRead
-                            # Report progress every 1MB to avoid flooding
-                            if ($totalBytes -gt 0 -and ($totalRead - $lastReport) -ge 1048576) {
-                                $pct = [int](($totalRead / $totalBytes) * 100)
-                                Write-Progress -Activity "Downloading $label" -Status "$([math]::Round($totalRead/1MB,1)) MB / $([math]::Round($totalBytes/1MB,1)) MB" -PercentComplete $pct
-                                $lastReport = $totalRead
-                            }
-                        }
-                        Write-Progress -Activity "Downloading $label" -Completed
-                    }
-                    finally {
-                        if ($fileStream) { $fileStream.Close(); $fileStream.Dispose() }
-                        if ($stream)     { $stream.Close(); $stream.Dispose() }
-                        $response.Close()
-                    }
+                    # Final URL — download with OutFile
+                    Invoke-WebRequest -Uri $current_url -OutFile $zipPath `
+                        -Headers @{ "User-Agent" = $ua }
                     break
                 }
 
@@ -738,6 +747,28 @@ function Invoke-DownloadAndExtract($url, $dest, $label) {
     }
 
     Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+    Write-Ok "$label extracted"
+}
+
+# Offline-only: extract a pre-downloaded zip directly (no download step).
+function Invoke-ExtractZip($zipPath, $dest, $label) {
+    Write-Host ""
+    Write-Info "Extracting $label from $zipPath..."
+    Expand-Archive -Path $zipPath -DestinationPath $dest -Force
+
+    # Flatten wrapper folder if present
+    $allItems = @(Get-ChildItem $dest -Force)
+    $dirsOnly = @($allItems | Where-Object { $_ -is [System.IO.DirectoryInfo] })
+    $filesOnly = @($allItems | Where-Object { $_ -is [System.IO.FileInfo] })
+
+    if ($dirsOnly.Count -eq 1 -and $filesOnly.Count -eq 0) {
+        $inner = $dirsOnly[0].FullName
+        Write-Info "  Flattening wrapper folder: $($dirsOnly[0].Name)"
+        Get-ChildItem $inner -Force | ForEach-Object {
+            Move-Item $_.FullName $dest -Force -ErrorAction SilentlyContinue
+        }
+        Remove-Item $inner -Recurse -Force -ErrorAction SilentlyContinue
+    }
     Write-Ok "$label extracted"
 }
 
@@ -1507,26 +1538,68 @@ function Invoke-InstallWebStack {
     New-Item -ItemType Directory -Force -Path $WWW_PATH | Out-Null
     New-Item -ItemType Directory -Force -Path $TEMP_DOWNLOADS | Out-Null
 
-    # Resolve URLs
+    # Resolve URLs (or use local zips in offline mode)
     Write-Host ""
-    Write-Bold "Resolving latest stable versions..."
-    Write-Host ""
+    if ($Offline) {
+        Write-Bold "Offline mode — using pre-downloaded zips from: $TEMP_DOWNLOADS"
+        Write-Host ""
 
-    try {
-        $apacheUrl  = Get-LatestApacheUrl
-        $phpUrl     = Get-LatestPhpUrl
-        $mariadbUrl = Get-LatestMariadbUrl
-        $pmaUrl     = Get-LatestPhpMyAdminUrl
-    }
-    catch {
-        Write-Err "Failed to resolve one or more download URLs. Aborting."
-        return
-    }
+        $zipFiles = Get-ChildItem -Path $TEMP_DOWNLOADS -Filter "*.zip" -ErrorAction SilentlyContinue
+        if (-not $zipFiles -or $zipFiles.Count -lt 4) {
+            Write-Err "Offline mode requires 4 zip files in $TEMP_DOWNLOADS (Apache, PHP, MariaDB, phpMyAdmin)."
+            Write-Info "  Run the script online once to download them, or place them manually."
+            return
+        }
 
-    # Download and extract (Apache, PHP, MariaDB only — PMA deferred)
-    Invoke-DownloadAndExtract $apacheUrl  $APACHE_PATH     "Apache"
-    Invoke-DownloadAndExtract $phpUrl     $PHP_PATH        "PHP"
-    Invoke-DownloadAndExtract $mariadbUrl $MARIADB_PATH    "MariaDB"
+        Write-Ok "Found $($zipFiles.Count) zip files — skipping URL resolution and download."
+
+        foreach ($zip in $zipFiles) {
+            $name = $zip.BaseName.ToLower()
+            if ($name -like "*httpd*" -or $name -like "*apache*") {
+                $apacheZip = $zip.FullName
+            }
+            elseif ($name -like "*php-*" -and $name -notlike "*phpmyadmin*") {
+                $phpZip = $zip.FullName
+            }
+            elseif ($name -like "*mariadb*") {
+                $mariadbZip = $zip.FullName
+            }
+            elseif ($name -like "*phpmyadmin*") {
+                $pmaZip = $zip.FullName
+            }
+        }
+
+        # Extract directly
+        if ($apacheZip)   { Invoke-ExtractZip $apacheZip   $APACHE_PATH     "Apache" }
+        if ($phpZip)      { Invoke-ExtractZip $phpZip      $PHP_PATH        "PHP" }
+        if ($mariadbZip)  { Invoke-ExtractZip $mariadbZip  $MARIADB_PATH    "MariaDB" }
+
+        if (-not $apacheZip -or -not $phpZip -or -not $mariadbZip) {
+            Write-Err "Could not identify all required zips by filename convention."
+            Write-Info "  Expected: *httpd* or *apache*, *php-* (not phpmyadmin), *mariadb*, *phpmyadmin*"
+            return
+        }
+    }
+    else {
+        Write-Bold "Resolving latest stable versions..."
+        Write-Host ""
+
+        try {
+            $apacheUrl  = Get-LatestApacheUrl
+            $phpUrl     = Get-LatestPhpUrl
+            $mariadbUrl = Get-LatestMariadbUrl
+            $pmaUrl     = Get-LatestPhpMyAdminUrl
+        }
+        catch {
+            Write-Err "Failed to resolve one or more download URLs. Aborting."
+            return
+        }
+
+        # Download and extract (Apache, PHP, MariaDB only — PMA deferred)
+        Invoke-DownloadAndExtract $apacheUrl  $APACHE_PATH     "Apache"
+        Invoke-DownloadAndExtract $phpUrl     $PHP_PATH        "PHP"
+        Invoke-DownloadAndExtract $mariadbUrl $MARIADB_PATH    "MariaDB"
+    }
 
     # Copy PHP dependency DLLs to Apache bin (ICU, curl deps, etc.)
     # Windows DLL search starts from httpd.exe's directory, not PHP's.
@@ -1995,6 +2068,10 @@ function Show-Dashboard {
 # ============================================================
 #  MAIN LOOP
 # ============================================================
+
+param(
+    [switch]$Offline  # Skip URL resolution — use pre-downloaded zips from TEMP
+)
 
 # Ensure we're running as Admin
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")
