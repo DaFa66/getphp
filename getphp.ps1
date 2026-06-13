@@ -999,7 +999,11 @@ function Invoke-FixSqliteDll {
             $zipFile = "$TEMP_DOWNLOADS\sqlite3_dll.zip"
 
             Write-Info "Downloading latest SQLite3 DLL..."
-            Invoke-WebRequest $url -OutFile $zipFile -UseBasicParsing -Headers @{ "User-Agent" = $ua }
+            if (-not (Test-Path $zipFile)) {
+                Invoke-WebRequest $url -OutFile $zipFile -UseBasicParsing -Headers @{ "User-Agent" = $ua }
+            } else {
+                Write-Ok "SQLite3 DLL zip already cached — using $zipFile"
+            }
 
             $extractDir = "$TEMP_DOWNLOADS\sqlite3_dll_extract"
             New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
@@ -1016,7 +1020,6 @@ function Invoke-FixSqliteDll {
                 Write-Warn "Could not find sqlite3.dll in downloaded archive - skipping"
             }
 
-            Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
             Remove-Item $extractDir -Recurse -Force -ErrorAction SilentlyContinue
         }
         else {
