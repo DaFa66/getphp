@@ -328,46 +328,51 @@ function Install-VcRedist {
     }
 
     # Fallback: direct download (for systems without winget)
-    $installer = "$env:TEMP\vc_redist.x64.exe"
+    $installer = "$TEMP_DOWNLOADS\vc_redist.x64.exe"
+    New-Item -ItemType Directory -Force -Path $TEMP_DOWNLOADS | Out-Null
 
-    $maxRetries = 3
-    $retryDelay = 5
-    $downloaded = $false
-
-    for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
-        try {
-            if ($attempt -gt 1) {
-                Write-Info "  Retry $attempt of $maxRetries..."
-            }
-            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile $installer
-            $downloaded = $true
-            break
-        }
-        catch {
-            if ($attempt -lt $maxRetries) {
-                Write-Warn "Download attempt $attempt failed. Retrying in $retryDelay seconds..."
-                Start-Sleep -Seconds $retryDelay
-            }
-            else {
-                Write-Err "Failed to download VC++ Redistributable after $maxRetries attempts: $_"
-                Write-Info "Install manually: https://aka.ms/vs/17/release/vc_redist.x64.exe"
-                return
-            }
-        }
+    if (Test-Path $installer) {
+        Write-Ok "VC++ Redistributable installer already cached — using $installer"
     }
+    else {
+        $maxRetries = 3
+        $retryDelay = 5
+        $downloaded = $false
 
-    if (-not $downloaded) { return }
+        for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+            try {
+                if ($attempt -gt 1) {
+                    Write-Info "  Retry $attempt of $maxRetries..."
+                }
+                [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+                Invoke-WebRequest -Uri "https://aka.ms/vc14/vc_redist.x64.exe" -OutFile $installer
+                $downloaded = $true
+                break
+            }
+            catch {
+                if ($attempt -lt $maxRetries) {
+                    Write-Warn "Download attempt $attempt failed. Retrying in $retryDelay seconds..."
+                    Start-Sleep -Seconds $retryDelay
+                }
+                else {
+                    Write-Err "Failed to download VC++ Redistributable after $maxRetries attempts: $_"
+                    Write-Info "Install manually: https://aka.ms/vc14/vc_redist.x64.exe"
+                    return
+                }
+            }
+        }
+
+        if (-not $downloaded) { return }
+    }
 
     Write-Info "Running installer (silent -- this may take a moment)..."
     $proc = Start-Process -FilePath $installer -ArgumentList "/install", "/quiet", "/norestart" -Wait -PassThru
-    Remove-Item $installer -Force -ErrorAction SilentlyContinue
     if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010) {
         Write-Ok "Visual C++ Redistributable installed successfully"
     }
     else {
         Write-Warn "Installer exited with code $($proc.ExitCode). Install manually:"
-        Write-Info "  https://aka.ms/vs/17/release/vc_redist.x64.exe"
+        Write-Info "  https://aka.ms/vc14/vc_redist.x64.exe"
     }
 }
 
@@ -498,7 +503,12 @@ function Get-LatestPhpUrl {
                 Start-Sleep -Seconds $retryDelay
             }
             else {
-                Write-Err "Failed to resolve PHP URL after $maxRetries attempts."
+                Write-Warn "Live resolution failed after $maxRetries attempts."
+                if ($FALLBACK_URLS.PHP) {
+                    Write-Info "  Falling back to pinned PHP URL: $($FALLBACK_URLS.PHP)"
+                    return $FALLBACK_URLS.PHP
+                }
+                Write-Err "Failed to resolve PHP URL and no fallback URL is configured."
                 Write-Info "  Check https://windows.php.net/ or try again later."
                 throw
             }
@@ -1271,7 +1281,7 @@ function Start-WebStackServices {
             Write-Host $testResult -ForegroundColor DarkGray
             Write-Info "If the error mentions missing DLLs (VCRUNTIME, MSVCP, etc.),"
             Write-Info "install the Visual C++ Redistributable from:"
-            Write-Info "  https://aka.ms/vs/17/release/vc_redist.x64.exe"
+            Write-Info "  https://aka.ms/vc14/vc_redist.x64.exe"
             return
         }
 
