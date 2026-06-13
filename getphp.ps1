@@ -1567,9 +1567,10 @@ function Invoke-InstallWebStack {
         }
 
         # Extract directly
-        if ($apacheZip)   { Invoke-ExtractZip $apacheZip   $APACHE_PATH     "Apache" }
-        if ($phpZip)      { Invoke-ExtractZip $phpZip      $PHP_PATH        "PHP" }
-        if ($mariadbZip)  { Invoke-ExtractZip $mariadbZip  $MARIADB_PATH    "MariaDB" }
+        if ($apacheZip)   { Invoke-ExtractZip $apacheZip   $APACHE_PATH      "Apache" }
+        if ($phpZip)      { Invoke-ExtractZip $phpZip      $PHP_PATH         "PHP" }
+        if ($mariadbZip)  { Invoke-ExtractZip $mariadbZip  $MARIADB_PATH     "MariaDB" }
+        if ($pmaZip)      { Invoke-ExtractZip $pmaZip      $PHPMYADMIN_PATH  "phpMyAdmin" }
 
         if (-not $apacheZip -or -not $phpZip -or -not $mariadbZip) {
             Write-Err "Could not identify all required zips by filename convention."
@@ -1655,10 +1656,12 @@ function Invoke-InstallWebStack {
 
     Invoke-ConfigureMariaDb
 
-    # ── phpMyAdmin ──────────────────────────────────────────
-    Write-Host ""
-    Write-Bold "── phpMyAdmin ──"
-    Invoke-DownloadAndExtract $pmaUrl     $PHPMYADMIN_PATH "phpMyAdmin"
+    if (-not $Offline) {
+        # ── phpMyAdmin ──────────────────────────────────────────
+        Write-Host ""
+        Write-Bold "── phpMyAdmin ──"
+        Invoke-DownloadAndExtract $pmaUrl     $PHPMYADMIN_PATH "phpMyAdmin"
+    }
     Invoke-ConfigurePhpMyAdmin
 
     # Create test file
