@@ -724,13 +724,6 @@ function Invoke-DownloadAndExtract($url, $dest, $label) {
             throw "Download failed - file not found: $zipPath"
         }
 
-        # Skip extraction if destination already populated (offline mode pre-extracted)
-        $existing = @(Get-ChildItem $dest -Force -ErrorAction SilentlyContinue)
-        if ($existing.Count -gt 0) {
-            Write-Ok "$label already extracted — skipping"
-            return
-        }
-
         Write-Info "Extracting to $dest..."
         Expand-Archive -Path $zipPath -DestinationPath $dest -Force
     }
