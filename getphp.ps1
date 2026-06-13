@@ -653,51 +653,58 @@ function Invoke-DownloadAndExtract($url, $dest, $label) {
 
     $filename = [IO.Path]::GetFileName($url)
     $zipPath  = Join-Path $TEMP_DOWNLOADS $filename
-    $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 
-    $maxRetries = 3
-    $retryDelay = 5
+    # Check if we already have this exact version cached
+    if (Test-Path $zipPath) {
+        Write-Ok "$label zip already cached — using $filename"
+        Write-Info "Extracting to $dest..."
+        Expand-Archive -Path $zipPath -DestinationPath $dest -Force
+    } else {
+        $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 
-    for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
-        try {
-            if ($attempt -gt 1) {
-                Write-Info "  Retry $attempt of $maxRetries..."
-            }
+        $maxRetries = 3
+        $retryDelay = 5
 
-            # Try with progress bar first (no -UseBasicParsing), fall back if IE not available
+        for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
             try {
-                Invoke-WebRequest -Uri $url -OutFile $zipPath -Headers @{ "User-Agent" = $ua }
-            }
-            catch [System.Management.Automation.MethodInvocationException] {
-                Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing -Headers @{ "User-Agent" = $ua }
-            }
+                if ($attempt -gt 1) {
+                    Write-Info "  Retry $attempt of $maxRetries..."
+                }
 
-            # Download succeeded — break out of retry loop
-            break
+                # Try with progress bar first, fall back if IE not available
+                try {
+                    Invoke-WebRequest -Uri $url -OutFile $zipPath -Headers @{ "User-Agent" = $ua }
+                }
+                catch [System.Management.Automation.MethodInvocationException] {
+                    Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing -Headers @{ "User-Agent" = $ua }
+                }
+
+                # Download succeeded — break out of retry loop
+                break
+            }
+            catch {
+                Write-Progress -Activity "Downloading $label" -Completed
+                if ($attempt -lt $maxRetries) {
+                    Write-Warn "  Download attempt $attempt failed: $($_.Exception.Message)"
+                    Write-Info "  Retrying in $retryDelay seconds..."
+                    [System.GC]::Collect()
+                    [System.GC]::WaitForPendingFinalizers()
+                    Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+                    Start-Sleep -Seconds $retryDelay
+                }
+                else {
+                    throw "Download failed for $label after $maxRetries attempts: $($_.Exception.Message)"
+                }
+            }
         }
-        catch {
-            Write-Progress -Activity "Downloading $label" -Completed
-            if ($attempt -lt $maxRetries) {
-                Write-Warn "  Download attempt $attempt failed: $($_.Exception.Message)"
-                Write-Info "  Retrying in $retryDelay seconds..."
-                # Force cleanup of any lingering file handles before delete
-                [System.GC]::Collect()
-                [System.GC]::WaitForPendingFinalizers()
-                Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
-                Start-Sleep -Seconds $retryDelay
-            }
-            else {
-                throw "Download failed for $label after $maxRetries attempts: $($_.Exception.Message)"
-            }
+
+        if (-not (Test-Path $zipPath)) {
+            throw "Download failed - file not found: $zipPath"
         }
-    }
 
-    if (-not (Test-Path $zipPath)) {
-        throw "Download failed - file not found: $zipPath"
+        Write-Info "Extracting to $dest..."
+        Expand-Archive -Path $zipPath -DestinationPath $dest -Force
     }
-
-    Write-Info "Extracting to $dest..."
-    Expand-Archive -Path $zipPath -DestinationPath $dest -Force
 
     # Flatten wrapper folder if present.
     # Apache Lounge = Apache24/  |  PHP = php-8.x.x-Win32-vs17-x64/
@@ -732,7 +739,6 @@ function Invoke-DownloadAndExtract($url, $dest, $label) {
         }
     }
 
-    Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
     Write-Ok "$label extracted"
 }
 
