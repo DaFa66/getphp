@@ -9,6 +9,10 @@
 # ============================================================
 #Requires -RunAsAdministrator
 
+param(
+    [switch]$Offline  # Skip URL resolution — use pre-downloaded zips from TEMP
+)
+
 # ---- Config -------------------------------------------------
 $TEMP_DOWNLOADS  = "$env:TEMP\webstack_downloads"
 
@@ -2123,10 +2127,6 @@ function Show-Dashboard {
 # ============================================================
 #  MAIN LOOP
 # ============================================================
-
-# param(
-#     [switch]$Offline  # Skip URL resolution — use pre-downloaded zips from TEMP
-# )
 
 # Ensure we're running as Admin
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")
