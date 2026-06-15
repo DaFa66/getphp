@@ -97,15 +97,16 @@ D  Delete the web stack
 Q  Quit
 ```
 
-| Key   | Action                                                                    |
-| ----- | ------------------------------------------------------------------------- |
-| **I** | Install the web stack (download + configure + start)                      |
-| **U** | Update outdated components (compares installed vs latest online versions) |
-| **R** | Restart Apache + MariaDB                                                  |
-| **S** | Stop all services (offers to unregister if Windows services installed)    |
-| **T** | Start all services (offers Windows service registration if not installed) |
-| **D** | Delete the web stack (preserves `www\` files and MariaDB data)            |
-| **Q** | Quit                                                                      |
+| Key    | Action                                                                                |
+| ------ | ------------------------------------------------------------------------------------- |
+| **I**  | Install the web stack (download + configure + start)                                  |
+| **U**  | Update outdated components (compares installed vs latest online versions)             |
+| **fu** | _(hidden)_ Forced update — switch components to any cached version from `%TEMP%\\webstack_downloads\\` without touching the network |
+| **R**  | Restart Apache + MariaDB                                                              |
+| **S**  | Stop all services (offers to unregister if Windows services installed)                |
+| **T**  | Start all services (offers Windows service registration if not installed)             |
+| **D**  | Delete the web stack (preserves `www\\` files and MariaDB data)                       |
+| **Q**  | Quit                                                                                  |
 
 ## After Installation
 
@@ -252,7 +253,7 @@ Unlike most installers that hardcode version numbers, `getphp.ps1` dynamically r
 - **MariaDB** — Queries the MariaDB REST API (`/rest-api/mariadb/`), sorts stable releases by support policy (Rolling > LTS), then by version number. Constructs direct archive URL from version and filename (bypasses REST API redirector). Excludes debug-symbols-only zips.
 - **phpMyAdmin** — Scrapes the phpMyAdmin downloads page, finds all stable `all-languages.zip` files (excluding snapshots), picks the highest version
 
-## Offline Mode & Download Caching
+## Offline Mode, Download Caching & Version Switching
 
 Run the script with `-Offline` to skip all URL resolution and downloading:
 
@@ -266,6 +267,8 @@ All downloaded files are cached permanently in `%TEMP%\webstack_downloads\`:
 - Component zips (Apache, PHP, MariaDB, phpMyAdmin) — reused on re-install when the version hasn't changed
 - SQLite3 DLL zip — cached and reused
 - VC++ Redistributable installer (`.exe`) — cached and reused
+
+Once you have multiple versions cached, the hidden **`fu`** (forced update) command lets you switch between them interactively without touching the network. Type `fu` at the dashboard prompt and you'll see a summary of installed vs cached versions, then choose which version to install per component — upgrades, downgrades, or snapshots. MariaDB databases are automatically backed up and restored across version changes.
 
 ## Known Quirks & Fixes
 
