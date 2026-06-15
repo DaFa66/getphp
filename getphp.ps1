@@ -114,6 +114,24 @@ function Get-VersionFromUrl([string]$url, [string]$component) {
     return $null
 }
 
+# Extract version string from a cached zip filename (offline mode)
+function Get-VersionFromZipName([string]$filename, [string]$component) {
+    $ver = $null
+    switch ($component) {
+        'apache'     { if ($filename -match 'httpd-([\d.]+)-') { $ver = $matches[1] } }
+        'php'        { if ($filename -match 'php-([\d.]+)-')  { $ver = $matches[1] } }
+        'mariadb'    { if ($filename -match 'mariadb-([\d.]+)-') { $ver = $matches[1] } }
+        'phpmyadmin' { if ($filename -match 'phpMyAdmin-([\d.]+)') { $ver = $matches[1] } }
+    }
+    if ($ver) {
+        # Normalize to at least 3 version parts (e.g. 6.0 → 6.0.0)
+        $parts = $ver -split '\.'
+        while ($parts.Count -lt 3) { $parts += '0' }
+        return ($parts -join '.')
+    }
+    return $null
+}
+
 # ---- Config Persistence --------------------------------------
 
 $CONFIG_FILE = "$env:APPDATA\getphp\config.json"
@@ -658,6 +676,9 @@ function Get-LatestPhpMyAdminUrl {
 # ============================================================
 
 function Invoke-DownloadAndExtract($url, $dest, $label) {
+    $prevProgress = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
+
     Write-Host ""
     Write-Host "Downloading $label..." -ForegroundColor Yellow
     Write-Info "  $url"
@@ -727,10 +748,6 @@ function Invoke-DownloadAndExtract($url, $dest, $label) {
     $dirsOnly = @($allItems | Where-Object { $_ -is [System.IO.DirectoryInfo] })
     $filesOnly = @($allItems | Where-Object { $_ -is [System.IO.FileInfo] })
 
-    # Suppress progress bars during bulk file moves (phpMyAdmin has ~4,300 files)
-    $prevProgress = $ProgressPreference
-    $ProgressPreference = 'SilentlyContinue'
-
     # Strategy: if there's exactly one directory and no loose files, flatten it
     if ($dirsOnly.Count -eq 1 -and $filesOnly.Count -eq 0) {
         $inner = $dirsOnly[0].FullName
@@ -764,6 +781,9 @@ function Invoke-DownloadAndExtract($url, $dest, $label) {
 
 # Offline-only: extract a pre-downloaded zip directly (no download step).
 function Invoke-ExtractZip($zipPath, $dest, $label) {
+    $prevProgress = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
+
     Write-Host ""
     Write-Info "Extracting $label from $zipPath..."
     Expand-Archive -Path $zipPath -DestinationPath $dest -Force
@@ -775,15 +795,11 @@ function Invoke-ExtractZip($zipPath, $dest, $label) {
 
     if ($dirsOnly.Count -eq 1 -and $filesOnly.Count -eq 0) {
         $inner = $dirsOnly[0].FullName
-        Write-Info "  Flattening wrapper folder: $($dirsOnly[0].Name)"
-
-        $prevProgress = $ProgressPreference
-        $ProgressPreference = 'SilentlyContinue'
+        Write-Info "Flattening wrapper folder: $($dirsOnly[0].Name)"
         Get-ChildItem $inner -Force | ForEach-Object {
             Move-Item $_.FullName $dest -Force -ErrorAction SilentlyContinue
         }
         Remove-Item $inner -Recurse -Force -ErrorAction SilentlyContinue
-        $ProgressPreference = $prevProgress
     }
     elseif ($dirsOnly.Count -ge 1) {
         # Multiple directories or mixed files/dirs — try known wrapper patterns
@@ -792,19 +808,17 @@ function Invoke-ExtractZip($zipPath, $dest, $label) {
             $match = @($dirsOnly | Where-Object { $_.Name -like $pattern })
             if ($match.Count -eq 1) {
                 $inner = $match[0].FullName
-                Write-Info "  Flattening wrapper folder: $($match[0].Name)"
-
-                $prevProgress = $ProgressPreference
-                $ProgressPreference = 'SilentlyContinue'
+                Write-Info "Flattening wrapper folder: $($match[0].Name)"
                 Get-ChildItem $inner -Force | ForEach-Object {
                     Move-Item $_.FullName $dest -Force -ErrorAction SilentlyContinue
                 }
                 Remove-Item $inner -Recurse -Force -ErrorAction SilentlyContinue
-                $ProgressPreference = $prevProgress
                 break
             }
         }
     }
+
+    $ProgressPreference = $prevProgress
     Write-Ok "$label extracted"
 }
 
@@ -1080,16 +1094,8 @@ function Invoke-CopyPhpDlls {
     Write-Host ""
     Write-Warn "Copying PHP dependency DLLs to Apache bin..."
 
-    $phpDlls = @(
-        'icudt77.dll',
-        'icuin77.dll',
-        'icuio77.dll',
-        'icuuc77.dll',
-        'libssh2.dll',
-        'nghttp2.dll',
-        'libzstd.dll',
-        'libsodium.dll'
-    )
+    $phpDlls = @(Get-ChildItem "$PHP_PATH\icu*.dll" -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+    $phpDlls += @('libssh2.dll', 'nghttp2.dll', 'libzstd.dll', 'libsodium.dll')
 
     foreach ($dll in $phpDlls) {
         $src = "$PHP_PATH\$dll"
@@ -1201,8 +1207,6 @@ function Invoke-ConfigurePhpMyAdmin {
 function Invoke-ConfigurePmaStorage {
 # Creates the phpmyadmin config storage database and imports the schema.
 # Enables bookmarks, query history, table tracking, designer, etc.
-    Write-Host ""
-    Write-Warn "Configuring phpMyAdmin storage (this may take a moment)..."
 
     # Check if already configured
     $testResult = & "$MARIADB_PATH\bin\mariadb.exe" -u root --skip-password -e "SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA='phpmyadmin' AND TABLE_NAME='pma__bookmark'" 2>&1
@@ -1767,6 +1771,56 @@ function Invoke-InstallWebStack {
 #  UPDATE
 # ============================================================
 
+function Backup-MariaDbData {
+    $dataDir = "$MARIADB_PATH\data"
+    $backupDir = "$BASE\data_backup_update"
+    if (Test-Path $dataDir) {
+        Write-Info "Backing up databases before MariaDB update..."
+        if (Test-Path $backupDir) {
+            Remove-Item $backupDir -Recurse -Force
+        }
+        New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
+        Get-ChildItem $dataDir | ForEach-Object {
+            Move-Item $_.FullName $backupDir -Force
+        }
+        Write-Ok "Databases backed up"
+    }
+}
+
+function Restore-MariaDbData {
+    $backupDir = "$BASE\data_backup_update"
+    if (Test-Path $backupDir) {
+        $newDataDir = "$MARIADB_PATH\data"
+        New-Item -ItemType Directory -Force -Path $newDataDir | Out-Null
+        Get-ChildItem $backupDir | ForEach-Object {
+            Move-Item $_.FullName $newDataDir -Force
+        }
+        Remove-Item $backupDir -Force
+        Write-Ok "Databases restored"
+    }
+}
+
+function Save-PostUpdateConfig($needsApache, $needsPhp, $needsMariadb, $needsPma) {
+    $existingConfig = Get-Config
+    $versions = @{
+        apache     = $(if ($needsApache)  { Get-ApacheVersion }     else { $existingConfig.versions.apache })
+        php        = $(if ($needsPhp)     { Get-PhpVersion }        else { $existingConfig.versions.php })
+        mariadb    = $(if ($needsMariadb) { Get-MariaDbVersion }    else { $existingConfig.versions.mariadb })
+        phpmyadmin = $(if ($needsPma)     { Get-PhpMyAdminVersion } else { $existingConfig.versions.phpmyadmin })
+    }
+    $pathEntries = $existingConfig.path_entries
+
+    if (-not (Test-ServicesInstalled)) {
+        Write-Host ""
+        $svcChoice = Read-Host "Install as Windows services (auto-start on boot)? [y/N]"
+        if ($svcChoice -match "^[Yy]") {
+            Install-AsServices
+        }
+    }
+
+    Save-Config -InstallPath $BASE -Versions $versions -PathEntries $pathEntries -ServicesRegistered:(Test-ServicesInstalled)
+}
+
 function Invoke-UpdateWebStack {
     Write-Host ""
     Write-Warn "Checking for newer versions..."
@@ -1832,6 +1886,7 @@ function Invoke-UpdateWebStack {
     $needsPma     = ($currentPmaVer -and $latestPmaVer -and ($currentPmaVer -ne 'unknown') -and ([version]$latestPmaVer -gt [version]$currentPmaVer))
 
     Stop-WebStackServices
+    Start-Sleep -Seconds 2
 
     Write-Host ""
     Write-Warn "Removing outdated installations..."
@@ -1849,8 +1904,13 @@ function Invoke-UpdateWebStack {
         Invoke-CopyPhpDlls
     }
     if ($needsMariadb) {
+        Backup-MariaDbData
+
         Remove-Item $MARIADB_PATH -Recurse -Force -ErrorAction SilentlyContinue
         Invoke-DownloadAndExtract $latestMariadbUrl $MARIADB_PATH "MariaDB"
+
+        Restore-MariaDbData
+
         Invoke-ConfigureMariaDb
     }
     if ($needsPma) {
@@ -1866,27 +1926,212 @@ function Invoke-UpdateWebStack {
 
     Write-Ok "Update complete"
 
-    # Update config with new versions (preserve existing for components not updated)
-    $existingConfig = Get-Config
-    $versions = @{
-        apache     = $(if ($needsApache)  { Get-ApacheVersion }     else { $existingConfig.versions.apache })
-        php        = $(if ($needsPhp)     { Get-PhpVersion }        else { $existingConfig.versions.php })
-        mariadb    = $(if ($needsMariadb) { Get-MariaDbVersion }     else { $existingConfig.versions.mariadb })
-        phpmyadmin = $(if ($needsPma)     { Get-PhpMyAdminVersion }  else { $existingConfig.versions.phpmyadmin })
-    }
-    $pathEntries = Add-ToPath
+    Save-PostUpdateConfig $needsApache $needsPhp $needsMariadb $needsPma
+}
 
-    # Offer Windows services if not already registered
-    if (-not (Test-ServicesInstalled)) {
-        Write-Host ""
-        $svcChoice = Read-Host "Install as Windows services (auto-start on boot)? [y/N]"
-        if ($svcChoice -match "^[Yy]") {
-            Install-AsServices
+# ============================================================
+#  FORCED UPDATE (offline — scans $TEMP_DOWNLOADS only)
+# ============================================================
+
+function Invoke-ForcedUpdate {
+    Write-Host ""
+    Write-Warn "Forced update (offline) — scanning $TEMP_DOWNLOADS for cached versions..."
+    Write-Host ""
+
+    $zipFiles = Get-ChildItem -Path $TEMP_DOWNLOADS -Filter "*.zip" -ErrorAction SilentlyContinue
+    if (-not $zipFiles) {
+        Write-Err "No zip files found in $TEMP_DOWNLOADS"
+        return
+    }
+
+    # Collect ALL cached versions per component (not just the newest)
+    $apacheVersions  = @()
+    $phpVersions     = @()
+    $mariadbVersions = @()
+    $pmaVersions     = @()
+
+    foreach ($zip in $zipFiles) {
+        $name = $zip.BaseName
+        if ($name -like "*httpd*" -or $name -like "*apache*") {
+            $ver = Get-VersionFromZipName $name 'apache'
+            if ($ver) { $apacheVersions += @{ Path = $zip.FullName; Version = $ver } }
+        }
+        elseif ($name -like "*php-*" -and $name -notlike "*phpmyadmin*") {
+            $ver = Get-VersionFromZipName $name 'php'
+            if ($ver) { $phpVersions += @{ Path = $zip.FullName; Version = $ver } }
+        }
+        elseif ($name -like "*mariadb*") {
+            $ver = Get-VersionFromZipName $name 'mariadb'
+            if ($ver) { $mariadbVersions += @{ Path = $zip.FullName; Version = $ver } }
+        }
+        elseif ($name -like "*phpmyadmin*") {
+            $ver = Get-VersionFromZipName $name 'phpmyadmin'
+            if ($ver) { $pmaVersions += @{ Path = $zip.FullName; Version = $ver } }
         }
     }
 
-    # Save config with final state (including service registration)
-    Save-Config -InstallPath $BASE -Versions $versions -PathEntries $pathEntries -ServicesRegistered:(Test-ServicesInstalled)
+    # Sort each by version descending
+    $apacheVersions  = @($apacheVersions  | Sort-Object { [version]$_.Version } -Descending)
+    $phpVersions     = @($phpVersions     | Sort-Object { [version]$_.Version } -Descending)
+    $mariadbVersions = @($mariadbVersions | Sort-Object { [version]$_.Version } -Descending)
+    $pmaVersions     = @($pmaVersions     | Sort-Object { [version]$_.Version } -Descending)
+
+    # Get installed versions
+    $currentApacheVer  = Get-ApacheVersion
+    $currentPhpVer     = Get-PhpVersion
+    $currentMariadbVer = Get-MariaDbVersion
+    $currentPmaVer     = Get-PhpMyAdminVersion
+
+    # ---- Summary ----
+    Write-Host "Cached versions in $TEMP_DOWNLOADS`:" -ForegroundColor White
+    Write-Host ""
+
+    function Show-ComponentSummary($label, $installed, $cachedList) {
+        Write-Host "$label" -NoNewline -ForegroundColor White
+        Write-Host " — installed: " -NoNewline
+        if ($installed) {
+            Write-Host $installed.PadRight(7) -NoNewline -ForegroundColor Green
+        } else {
+            Write-Host "none    " -NoNewline -ForegroundColor DarkGray
+        }
+        Write-Host " |  cache: " -NoNewline
+        if ($cachedList.Count -eq 0) {
+            Write-Host "none" -ForegroundColor DarkGray
+        } else {
+            $labels = @($cachedList | ForEach-Object { $_.Version })
+            Write-Host ($labels -join ", ") -ForegroundColor Cyan
+        }
+    }
+
+    Show-ComponentSummary "Apache    " $currentApacheVer  $apacheVersions
+    Show-ComponentSummary "PHP       " $currentPhpVer     $phpVersions
+    Show-ComponentSummary "MariaDB   " $currentMariadbVer $mariadbVersions
+    Show-ComponentSummary "phpMyAdmin" $currentPmaVer     $pmaVersions
+
+    # ---- Interactive selection ----
+    $components = @(
+        @{ Name = 'Apache';     Installed = $currentApacheVer;  Cached = $apacheVersions;  Var = 'selectedApache' }
+        @{ Name = 'PHP';        Installed = $currentPhpVer;     Cached = $phpVersions;     Var = 'selectedPhp' }
+        @{ Name = 'MariaDB';    Installed = $currentMariadbVer; Cached = $mariadbVersions; Var = 'selectedMariadb' }
+        @{ Name = 'phpMyAdmin'; Installed = $currentPmaVer;     Cached = $pmaVersions;     Var = 'selectedPma' }
+    )
+
+    $selectedApache  = $null
+    $selectedPhp     = $null
+    $selectedMariadb = $null
+    $selectedPma     = $null
+
+    $anyChoice = $false
+
+    foreach ($comp in $components) {
+        if ($comp.Cached.Count -eq 0) { continue }
+
+        # If only one cached version and it matches installed, skip
+        if ($comp.Cached.Count -eq 1 -and $comp.Installed -and $comp.Cached[0].Version -eq $comp.Installed) {
+            continue
+        }
+
+        Write-Host ""
+        Write-Host "$($comp.Name):" -ForegroundColor White
+
+        for ($i = 0; $i -lt $comp.Cached.Count; $i++) {
+            $v = $comp.Cached[$i].Version
+            $tag = ""
+            $tagColor = "Cyan"
+            if ($comp.Installed) {
+                try {
+                    if ([version]$v -gt [version]$comp.Installed) { $tag = " (newer)"; $tagColor = "Yellow" }
+                    elseif ([version]$v -lt [version]$comp.Installed) { $tag = " (older)"; $tagColor = "DarkGray" }
+                    else { $tag = " (current)"; $tagColor = "Green" }
+                } catch { }
+            }
+            Write-Host "  [$($i + 1)] $v" -NoNewline -ForegroundColor Cyan
+            if ($tag) {
+                Write-Host $tag -ForegroundColor $tagColor
+            } else {
+                Write-Host ""
+            }
+        }
+        Write-Host "  [S] skip" -ForegroundColor DarkGray
+
+        $choice = Read-Host "  Choose"
+        if ($choice -match '^[Ss]$' -or [string]::IsNullOrWhiteSpace($choice)) {
+            continue
+        }
+        try {
+            $idx = [int]$choice - 1
+            if ($idx -ge 0 -and $idx -lt $comp.Cached.Count) {
+                Set-Variable -Name $comp.Var -Value $comp.Cached[$idx]
+                $anyChoice = $true
+                Write-Ok "$($comp.Name) → $($comp.Cached[$idx].Version)"
+            } else {
+                Write-Warn "  Invalid choice — skipping $($comp.Name)"
+            }
+        } catch {
+            Write-Warn "  Invalid choice — skipping $($comp.Name)"
+        }
+    }
+
+    if (-not $anyChoice) {
+        Write-Host ""
+        Write-Info "Nothing selected — no changes made."
+        return
+    }
+
+    # ---- Apply ----
+    $needsApache  = ($null -ne $selectedApache)
+    $needsPhp     = ($null -ne $selectedPhp)
+    $needsMariadb = ($null -ne $selectedMariadb)
+    $needsPma     = ($null -ne $selectedPma)
+
+    Stop-WebStackServices
+    Start-Sleep -Seconds 2
+
+    Write-Host ""
+    Write-Warn "Applying selected versions..."
+
+    $prevProgress = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
+
+    if ($needsApache) {
+        Remove-Item $APACHE_PATH -Recurse -Force -ErrorAction SilentlyContinue
+        Invoke-ExtractZip $selectedApache.Path $APACHE_PATH "Apache"
+        Invoke-ConfigureApache
+        Write-Host ""
+    }
+    if ($needsPhp) {
+        Remove-Item $PHP_PATH -Recurse -Force -ErrorAction SilentlyContinue
+        Invoke-ExtractZip $selectedPhp.Path $PHP_PATH "PHP"
+        Invoke-ConfigurePhp
+        Invoke-FixSqliteDll
+        Invoke-CopyPhpDlls
+        Write-Host ""
+    }
+    if ($needsMariadb) {
+        Backup-MariaDbData
+
+        Remove-Item $MARIADB_PATH -Recurse -Force -ErrorAction SilentlyContinue
+        Invoke-ExtractZip $selectedMariadb.Path $MARIADB_PATH "MariaDB"
+
+        Restore-MariaDbData
+
+        Invoke-ConfigureMariaDb
+    }
+    if ($needsPma) {
+        Remove-Item $PHPMYADMIN_PATH -Recurse -Force -ErrorAction SilentlyContinue
+        Invoke-ExtractZip $selectedPma.Path $PHPMYADMIN_PATH "phpMyAdmin"
+        Invoke-ConfigurePhpMyAdmin
+    }
+
+    Start-WebStackServices
+    $ProgressPreference = $prevProgress
+
+    if ($needsPma) { Invoke-ConfigurePmaStorage }
+
+    Write-Host ""
+    Write-Host "Forced update complete"
+
+    Save-PostUpdateConfig $needsApache $needsPhp $needsMariadb $needsPma
 }
 
 # ============================================================
@@ -2374,6 +2619,10 @@ while ($true) {
             Write-Ok "Goodbye!"
             Write-Host ""
             exit 0
+        }
+        "fu" {
+            if ($stackComplete) { Invoke-ForcedUpdate }
+            else { Write-Err "Stack not installed. Use 'I' to install first." }
         }
         default {
             Write-Err "Command not recognised."
