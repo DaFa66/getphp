@@ -7,7 +7,6 @@
 #  Date: 2026-06-15
 #  Version: 1.0.5
 # ============================================================
-#Requires -RunAsAdministrator
 
 param(
     [switch]$Offline  # Skip URL resolution — use pre-downloaded zips from TEMP
