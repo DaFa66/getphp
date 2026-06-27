@@ -473,7 +473,7 @@ Not supported. getPHP requires x64 (Intel/AMD 64-bit) — Apache Lounge and Mari
 
 If you run into any errors or bugs, please open an [issue](https://github.com/DaFa66/getphp/issues) or send a [pull request](https://github.com/DaFa66/getphp/pulls).
 
-You can also contact us through the [Support Page](https://getphp.org/support.php) at [getPHP.org](https://getphp.org).
+You can also contact Balázs Szabó through his [Support Page](https://getphp.org/support.php) at [getPHP.org](https://getphp.org).
 
 ---
 
