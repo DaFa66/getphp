@@ -25,7 +25,7 @@ $BANNER_ART = @'
 │   |  __/|  _  |  __/| || |  │
 │   |_|   |_| |_|_|    ||_|   │
 │         ▲ ▲ ▲               │
-│        phpup                │
+│         phpup               │
 └─────────────────────────────┘
 '@
 
@@ -2244,7 +2244,9 @@ function Show-Dashboard {
             Write-Host "               │" -ForegroundColor White
         }
         elseif ($line -match 'phpup') {
-            Write-Host $line -ForegroundColor Cyan
+            Write-Host "│         " -NoNewline -ForegroundColor White
+            Write-Host "phpup" -NoNewline -ForegroundColor Cyan
+            Write-Host "               │" -ForegroundColor White
         }
         else {
             Write-Host $line -ForegroundColor White

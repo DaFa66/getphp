@@ -73,7 +73,7 @@ After running the script, you'll see the phpup dashboard:
 │   |  __/|  _  |  __/| || |  │
 │   |_|   |_| |_|_|    ||_|   │
 │         ▲ ▲ ▲               │
-│        phpup                │
+│         phpup               │
 └─────────────────────────────┘
 
 Your Web Stack:
