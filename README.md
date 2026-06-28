@@ -2,7 +2,7 @@
 
 > **Acknowledgments**
 >
-> This project is a Windows x64 port inspired by the original [getPHP.org](https://getphp.org) project founded by Balázs Szabó. The original Mac/Linux shell script — a brilliantly concise sub 300-line installer that delivers a complete PHP stack with a single command — set the standard for simplicity and developer experience that this Windows port aspires to.
+> This project is a Windows x64 port inspired by the original [getPHP.org](https://getphp.org) project founded by Balázs Zatik. The original Mac/Linux shell script — a brilliantly concise sub 300-line installer that delivers a complete PHP stack with a single command — set the standard for simplicity and developer experience that this Windows port aspires to.
 >
 > Balázs has since launched his own Windows version using Winget as the installer — proving once again that less is more in just under 700 lines of code. Both projects share the same spirit: **no bloat, no desktop app, just a working PHP stack.**
 >
@@ -474,7 +474,7 @@ Not supported. phpup requires x64 (Intel/AMD 64-bit) — Apache Lounge and Maria
 
 If you run into any errors or bugs, please open an [issue](https://github.com/DaFa66/phpup/issues) or send a [pull request](https://github.com/DaFa66/phpup/pulls).
 
-You can also contact Balázs Szabó through his [Support Page](https://getphp.org/support.php) at [getPHP.org](https://getphp.org).
+You can also contact Balázs Zatik through his [Support Page](https://getphp.org/support.php) at [getPHP.org](https://getphp.org).
 
 ---
 

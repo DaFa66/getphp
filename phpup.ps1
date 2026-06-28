@@ -1,6 +1,6 @@
 # ============================================================
 #  phpup — Windows 11 x64 Web Stack Installer & Dashboard
-#  Inspired by getphp.org (Mac, Linux & Windows) by Balázs Szabó
+#  Inspired by getphp.org (Mac, Linux & Windows) by Balázs Zatik
 #  Github: https://github.com/DaFa66/phpup
 #  Author: Simon Field (aka - DaFa)
 #  License: MIT
